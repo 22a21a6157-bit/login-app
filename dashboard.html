@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h2>Welcome, {{ username }}!</h2>
+<p style="text-align:center; color:#374151;">You are logged in successfully.</p>
+{% if session.get('role') == 'admin' %}
+<a href="{{ url_for('admin_panel') }}"><button type="button" style="background:#0891b2;">Go to Admin Panel</button></a>
+{% endif %}
+<a href="{{ url_for('logout') }}"><button type="button">Log Out</button></a>
+{% endblock %}
