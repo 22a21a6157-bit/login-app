@@ -21,6 +21,55 @@ def get_db_connection():
     return conn
 
 
+def init_db():
+    """Create the users table if it doesn't exist, and seed an admin
+    account from environment variables if one isn't there yet.
+    Runs automatically on startup -- no Shell access required."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(50) NOT NULL UNIQUE,
+                    email VARCHAR(100) NOT NULL UNIQUE,
+                    password VARCHAR(255) NOT NULL,
+                    role VARCHAR(20) NOT NULL DEFAULT 'user',
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+            )
+            conn.commit()
+
+            admin_username = os.environ.get("ADMIN_USERNAME")
+            admin_email = os.environ.get("ADMIN_EMAIL")
+            admin_password = os.environ.get("ADMIN_PASSWORD")
+
+            if admin_username and admin_email and admin_password:
+                cur.execute(
+                    "SELECT id FROM users WHERE username=%s", (admin_username,)
+                )
+                if not cur.fetchone():
+                    cur.execute(
+                        """INSERT INTO users (username, email, password, role, status)
+                           VALUES (%s, %s, %s, 'admin', 'approved')""",
+                        (
+                            admin_username,
+                            admin_email,
+                            generate_password_hash(admin_password),
+                        ),
+                    )
+                    conn.commit()
+                    print(f"Admin user '{admin_username}' created.")
+    finally:
+        conn.close()
+
+
+init_db()
+
+
 def login_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
