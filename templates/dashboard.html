@@ -3,6 +3,13 @@
 {% block content %}
 <h2>Welcome, {{ username }}!</h2>
 <p style="text-align:center; color:#374151;">You are logged in successfully.</p>
+<p style="text-align:center; color:#6b7280; font-size:13px;">Your ID: <strong>{{ unique_id }}</strong></p>
+
+<label>Your referral link (share this to invite others):</label>
+<input type="text" value="{{ referral_link }}" readonly
+       onclick="this.select();"
+       style="width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:12px; background:#f9fafb;">
+
 {% if session.get('role') == 'admin' %}
 <a href="{{ url_for('admin_panel') }}"><button type="button" style="background:#0891b2;">Go to Admin Panel</button></a>
 {% endif %}
