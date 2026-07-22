@@ -2,7 +2,11 @@
 {% block title %}Register{% endblock %}
 {% block content %}
 <h2>Create Account</h2>
+{% if ref_code %}
+<p style="text-align:center; font-size:13px; color:#16a34a;">Referred by: {{ ref_code }}</p>
+{% endif %}
 <form method="POST">
+  <input type="hidden" name="ref" value="{{ ref_code }}">
   <label for="username">Username</label>
   <input type="text" id="username" name="username" required>
 
@@ -17,6 +21,9 @@
 
   <button type="submit">Register</button>
 </form>
+<a href="{{ url_for('login_google', ref=ref_code) }}">
+  <button type="button" style="background:#dc2626; margin-top:10px;">Sign up with Google</button>
+</a>
 <div class="switch-link">
   Already have an account? <a href="{{ url_for('login') }}">Log In</a>
 </div>
