@@ -3,7 +3,7 @@
 {% block content %}
 <h2>Log In</h2>
 <form method="POST">
-  <label for="username">Username</label>
+  <label for="username">Username or Email</label>
   <input type="text" id="username" name="username" required>
 
   <label for="password">Password</label>
@@ -11,6 +11,9 @@
 
   <button type="submit">Log In</button>
 </form>
+<a href="{{ url_for('login_google') }}">
+  <button type="button" style="background:#dc2626; margin-top:10px;">Sign in with Google</button>
+</a>
 <div class="switch-link">
   Don't have an account? <a href="{{ url_for('register') }}">Register</a>
 </div>
