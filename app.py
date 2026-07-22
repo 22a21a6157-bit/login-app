@@ -49,6 +49,7 @@ def init_db():
                     status VARCHAR(20) NOT NULL DEFAULT 'pending',
                     unique_id VARCHAR(20) UNIQUE,
                     google_id VARCHAR(255) UNIQUE,
+                    referred_by VARCHAR(20),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """
@@ -56,6 +57,7 @@ def init_db():
             # Upgrade columns for tables created before this version existed.
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS unique_id VARCHAR(20) UNIQUE;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) UNIQUE;")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by VARCHAR(20);")
             cur.execute("ALTER TABLE users ALTER COLUMN password DROP NOT NULL;")
             conn.commit()
 
@@ -133,6 +135,7 @@ def log_user_in(user):
     session["user_id"] = user["id"]
     session["username"] = user["username"]
     session["role"] = user["role"]
+    session["unique_id"] = user["unique_id"]
 
 
 @app.route("/")
@@ -148,6 +151,7 @@ def register():
         username = request.form.get("username", "").strip()
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
+        ref_code = request.form.get("ref", "").strip().upper()
 
         if not username or not email or not password:
             flash("All fields are required.")
@@ -173,10 +177,18 @@ def register():
                     flash("That email is already registered. Please log in instead.")
                     return redirect(url_for("register"))
 
+                # Validate referral code, if any -- must match an existing user's unique_id.
+                referred_by = None
+                if ref_code:
+                    cur.execute("SELECT unique_id FROM users WHERE unique_id=%s", (ref_code,))
+                    ref_row = cur.fetchone()
+                    if ref_row:
+                        referred_by = ref_row["unique_id"]
+
                 cur.execute(
-                    """INSERT INTO users (username, email, password, role, status)
-                       VALUES (%s, %s, %s, 'user', 'pending') RETURNING id""",
-                    (username, email, hashed_password),
+                    """INSERT INTO users (username, email, password, role, status, referred_by)
+                       VALUES (%s, %s, %s, 'user', 'pending', %s) RETURNING id""",
+                    (username, email, hashed_password, referred_by),
                 )
                 new_id = cur.fetchone()["id"]
                 unique_id = f"REG{new_id:06d}"
@@ -189,7 +201,8 @@ def register():
               f"An admin must approve your account before you can log in.")
         return redirect(url_for("login"))
 
-    return render_template("register.html")
+    ref_code = request.args.get("ref", "")
+    return render_template("register.html", ref_code=ref_code)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -231,6 +244,9 @@ def login():
 
 @app.route("/login/google")
 def login_google():
+    ref_code = request.args.get("ref", "").strip().upper()
+    if ref_code:
+        session["pending_ref"] = ref_code
     redirect_uri = url_for("google_callback", _external=True)
     return google.authorize_redirect(redirect_uri)
 
@@ -263,10 +279,18 @@ def google_callback():
                     suffix += 1
                     username = f"{base_username}{suffix}"
 
+                referred_by = None
+                ref_code = session.pop("pending_ref", None)
+                if ref_code:
+                    cur.execute("SELECT unique_id FROM users WHERE unique_id=%s", (ref_code,))
+                    ref_row = cur.fetchone()
+                    if ref_row:
+                        referred_by = ref_row["unique_id"]
+
                 cur.execute(
-                    """INSERT INTO users (username, email, password, role, status, google_id)
-                       VALUES (%s, %s, NULL, 'user', 'pending', %s) RETURNING id""",
-                    (username, email, google_id),
+                    """INSERT INTO users (username, email, password, role, status, google_id, referred_by)
+                       VALUES (%s, %s, NULL, 'user', 'pending', %s, %s) RETURNING id""",
+                    (username, email, google_id, referred_by),
                 )
                 new_id = cur.fetchone()["id"]
                 unique_id = f"REG{new_id:06d}"
@@ -292,7 +316,13 @@ def google_callback():
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    return render_template("dashboard.html", username=session["username"])
+    referral_link = url_for("register", ref=session.get("unique_id"), _external=True)
+    return render_template(
+        "dashboard.html",
+        username=session["username"],
+        unique_id=session.get("unique_id"),
+        referral_link=referral_link,
+    )
 
 
 @app.route("/logout")
@@ -310,8 +340,14 @@ def admin_panel():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT id, unique_id, username, email, status FROM users
-                   WHERE role != 'admin' ORDER BY created_at DESC"""
+                """
+                SELECT u.id, u.unique_id, u.username, u.email, u.status,
+                       u.referred_by, r.username AS referrer_username
+                FROM users u
+                LEFT JOIN users r ON u.referred_by = r.unique_id
+                WHERE u.role != 'admin'
+                ORDER BY u.created_at DESC
+                """
             )
             users = cur.fetchall()
     finally:
@@ -349,4 +385,3 @@ def reject_user(user_id):
 
 if __name__ == "__main__":
     app.run(debug=True)
-    
