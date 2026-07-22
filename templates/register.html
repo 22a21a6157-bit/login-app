@@ -21,9 +21,11 @@
 
   <button type="submit">Register</button>
 </form>
+{% if google_login_enabled %}
 <a href="{{ url_for('login_google', ref=ref_code) }}">
   <button type="button" style="background:#dc2626; margin-top:10px;">Sign up with Google</button>
 </a>
+{% endif %}
 <div class="switch-link">
   Already have an account? <a href="{{ url_for('login') }}">Log In</a>
 </div>
