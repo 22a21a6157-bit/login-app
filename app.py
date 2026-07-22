@@ -16,15 +16,26 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://postgres:password@localhost:5432/login_app"
 )
 
-# ---- Google OAuth config ----
+# ---- Google OAuth config (optional) ----
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+GOOGLE_LOGIN_ENABLED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
 oauth = OAuth(app)
-google = oauth.register(
-    name="google",
-    client_id=os.environ.get("GOOGLE_CLIENT_ID"),
-    client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
-    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={"scope": "openid email profile"},
-)
+google = None
+if GOOGLE_LOGIN_ENABLED:
+    google = oauth.register(
+        name="google",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
+
+
+@app.context_processor
+def inject_google_flag():
+    return {"google_login_enabled": GOOGLE_LOGIN_ENABLED}
 
 
 def get_db_connection():
@@ -244,6 +255,9 @@ def login():
 
 @app.route("/login/google")
 def login_google():
+    if not GOOGLE_LOGIN_ENABLED:
+        flash("Google Sign-In is not set up on this app.")
+        return redirect(url_for("login"))
     ref_code = request.args.get("ref", "").strip().upper()
     if ref_code:
         session["pending_ref"] = ref_code
@@ -253,6 +267,8 @@ def login_google():
 
 @app.route("/login/google/callback")
 def google_callback():
+    if not GOOGLE_LOGIN_ENABLED:
+        return redirect(url_for("login"))
     token = google.authorize_access_token()
     user_info = token.get("userinfo")
     google_id = user_info["sub"]
