@@ -1,59 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Admin Panel{% endblock %}
+{% block title %}Login{% endblock %}
 {% block content %}
-<h2>Pending Approvals</h2>
-{% if users|length == 0 %}
-  <p style="text-align:center; color:#6b7280;">No users yet.</p>
-{% else %}
-  <table style="width:100%; border-collapse: collapse; font-size: 14px;">
-    <thead>
-      <tr style="text-align:left; border-bottom: 1px solid #e5e7eb;">
-        <th style="padding:8px 4px;">Reg. ID</th>
-        <th style="padding:8px 4px;">Username</th>
-        <th style="padding:8px 4px;">Email</th>
-        <th style="padding:8px 4px;">Referred By</th>
-        <th style="padding:8px 4px;">Status</th>
-        <th style="padding:8px 4px;">Action</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in users %}
-      <tr style="border-bottom: 1px solid #f3f4f6;">
-        <td style="padding:8px 4px; font-family:monospace;">{{ u.unique_id }}</td>
-        <td style="padding:8px 4px;">{{ u.username }}</td>
-        <td style="padding:8px 4px;">{{ u.email }}</td>
-        <td style="padding:8px 4px;">
-          {% if u.referred_by %}
-            {{ u.referrer_username }} <span style="color:#9ca3af; font-size:11px;">({{ u.referred_by }})</span>
-          {% else %}
-            <span style="color:#9ca3af;">Direct</span>
-          {% endif %}
-        </td>
-        <td style="padding:8px 4px;">
-          {% if u.status == 'approved' %}
-            <span style="color:#16a34a;">Approved</span>
-          {% elif u.status == 'rejected' %}
-            <span style="color:#dc2626;">Rejected</span>
-          {% else %}
-            <span style="color:#d97706;">Pending</span>
-          {% endif %}
-        </td>
-        <td style="padding:8px 4px;">
-          {% if u.status != 'approved' %}
-          <form method="POST" action="{{ url_for('approve_user', user_id=u.id) }}" style="display:inline;">
-            <button type="submit" style="width:auto; padding:6px 10px; margin:0; font-size:12px; background:#16a34a;">Approve</button>
-          </form>
-          {% endif %}
-          {% if u.status != 'rejected' %}
-          <form method="POST" action="{{ url_for('reject_user', user_id=u.id) }}" style="display:inline;">
-            <button type="submit" style="width:auto; padding:6px 10px; margin:0 0 0 6px; font-size:12px; background:#dc2626;">Reject</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<h2>Log In</h2>
+<form method="POST">
+  <label for="username">Username or Email</label>
+  <input type="text" id="username" name="username" required>
+
+  <label for="password">Password</label>
+  <input type="password" id="password" name="password" required>
+
+  <button type="submit">Log In</button>
+</form>
+{% if google_login_enabled %}
+<a href="{{ url_for('login_google') }}">
+  <button type="button" style="background:#dc2626; margin-top:10px;">Sign in with Google</button>
+</a>
 {% endif %}
-<div class="switch-link"><a href="{{ url_for('logout') }}">Log Out</a></div>
+<div class="switch-link">
+  Don't have an account? <a href="{{ url_for('register') }}">Register</a>
+</div>
 {% endblock %}
