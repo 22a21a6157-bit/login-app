@@ -8,6 +8,7 @@
   <table style="width:100%; border-collapse: collapse; font-size: 14px;">
     <thead>
       <tr style="text-align:left; border-bottom: 1px solid #e5e7eb;">
+        <th style="padding:8px 4px;">Reg. ID</th>
         <th style="padding:8px 4px;">Username</th>
         <th style="padding:8px 4px;">Email</th>
         <th style="padding:8px 4px;">Status</th>
@@ -17,6 +18,7 @@
     <tbody>
       {% for u in users %}
       <tr style="border-bottom: 1px solid #f3f4f6;">
+        <td style="padding:8px 4px; font-family:monospace;">{{ u.unique_id }}</td>
         <td style="padding:8px 4px;">{{ u.username }}</td>
         <td style="padding:8px 4px;">{{ u.email }}</td>
         <td style="padding:8px 4px;">
