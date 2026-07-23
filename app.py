@@ -1,8 +1,7 @@
 import os
 import re
 import random
-import smtplib
-from email.mime.text import MIMEText
+import requests
 from datetime import datetime, timedelta
 import psycopg2
 import psycopg2.extras
@@ -41,26 +40,36 @@ def inject_google_flag():
     return {"google_login_enabled": GOOGLE_LOGIN_ENABLED}
 
 
-# ---- Email (OTP) config ----
-MAIL_USERNAME = os.environ.get("MAIL_USERNAME")
-MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD")
-MAIL_ENABLED = bool(MAIL_USERNAME and MAIL_PASSWORD)
+# ---- Email (OTP) config -- using Brevo's HTTPS email API ----
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY")
+BREVO_SENDER_EMAIL = os.environ.get("BREVO_SENDER_EMAIL")
+MAIL_ENABLED = bool(BREVO_API_KEY and BREVO_SENDER_EMAIL)
 
 
 def send_email(to_email, subject, body):
     if not MAIL_ENABLED:
         print(f"[MAIL DISABLED] Would send to {to_email}: {subject}\n{body}")
         return False
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = MAIL_USERNAME
-    msg["To"] = to_email
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
-            server.starttls()
-            server.login(MAIL_USERNAME, MAIL_PASSWORD)
-            server.sendmail(MAIL_USERNAME, [to_email], msg.as_string())
-        return True
+        response = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={
+                "accept": "application/json",
+                "api-key": BREVO_API_KEY,
+                "content-type": "application/json",
+            },
+            json={
+                "sender": {"email": BREVO_SENDER_EMAIL, "name": "Login App"},
+                "to": [{"email": to_email}],
+                "subject": subject,
+                "textContent": body,
+            },
+            timeout=10,
+        )
+        if response.status_code in (200, 201):
+            return True
+        print(f"Email send failed: {response.status_code} {response.text}")
+        return False
     except Exception as e:
         print(f"Email send failed: {e}")
         return False
@@ -297,8 +306,8 @@ def forgot_password():
                 )
                 user = cur.fetchone()
 
-                if not user or not user["email"]:
-                    flash("If that account exists, an OTP has been sent to its email.")
+                if not user or not user["email"] or user["status"] != "approved":
+                    flash("If that account exists and is approved, an OTP has been sent to its email.")
                     return redirect(url_for("forgot_password"))
 
                 otp = f"{random.randint(0, 999999):06d}"
@@ -368,8 +377,20 @@ def reset_password():
                     (generate_password_hash(new_password), user["id"]),
                 )
                 conn.commit()
+
+                cur.execute("SELECT email FROM users WHERE role='admin'")
+                admin_emails = [row["email"] for row in cur.fetchall() if row["email"]]
+                reset_username = user["username"]
         finally:
             conn.close()
+
+        for admin_email in admin_emails:
+            send_email(
+                admin_email,
+                "Password reset notification",
+                f"User '{reset_username}' just reset their password via OTP.\n"
+                f"Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            )
 
         session.pop("reset_identifier", None)
         flash("Password reset successfully. Please log in.")
