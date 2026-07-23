@@ -1,51 +1,91 @@
 {% extends "base.html" %}
 {% block title %}Admin Panel{% endblock %}
 {% block content %}
-<h2>Pending Approvals</h2>
+<h2>Admin Panel</h2>
+
+<div style="display:flex; gap:10px; margin-bottom:20px;">
+  <div style="flex:1; background:#dcfce7; border-radius:50%; aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:10px;">
+    <div style="font-size:22px; font-weight:700; color:#166534;">{{ pending_count }}</div>
+    <div style="font-size:11px; color:#166534; text-align:center;">Pending<br>Requests</div>
+  </div>
+  <div style="flex:1; background:#fef3c7; border-radius:50%; aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:10px;">
+    <div style="font-size:22px; font-weight:700; color:#92400e;">{{ total_participants }}</div>
+    <div style="font-size:11px; color:#92400e; text-align:center;">Total<br>Participants</div>
+  </div>
+  <div style="flex:1; background:#fee2e2; border-radius:50%; aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:10px;">
+    <div style="font-size:22px; font-weight:700; color:#991b1b;">{{ password_requests }}</div>
+    <div style="font-size:11px; color:#991b1b; text-align:center;">Password<br>Requests</div>
+  </div>
+</div>
+
 {% if users|length == 0 %}
   <p style="text-align:center; color:#6b7280;">No users yet.</p>
 {% else %}
-  <table style="width:100%; border-collapse: collapse; font-size: 14px;">
-    <thead>
-      <tr style="text-align:left; border-bottom: 1px solid #e5e7eb;">
-        <th style="padding:8px 4px;">Reg. ID</th>
-        <th style="padding:8px 4px;">Username</th>
-        <th style="padding:8px 4px;">Email</th>
-        <th style="padding:8px 4px;">Status</th>
-        <th style="padding:8px 4px;">Action</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in users %}
-      <tr style="border-bottom: 1px solid #f3f4f6;">
-        <td style="padding:8px 4px; font-family:monospace;">{{ u.unique_id }}</td>
-        <td style="padding:8px 4px;">{{ u.username }}</td>
-        <td style="padding:8px 4px;">{{ u.email }}</td>
-        <td style="padding:8px 4px;">
-          {% if u.status == 'approved' %}
-            <span style="color:#16a34a;">Approved</span>
-          {% elif u.status == 'rejected' %}
-            <span style="color:#dc2626;">Rejected</span>
-          {% else %}
-            <span style="color:#d97706;">Pending</span>
-          {% endif %}
-        </td>
-        <td style="padding:8px 4px;">
-          {% if u.status != 'approved' %}
-          <form method="POST" action="{{ url_for('approve_user', user_id=u.id) }}" style="display:inline;">
-            <button type="submit" style="width:auto; padding:6px 10px; margin:0; font-size:12px; background:#16a34a;">Approve</button>
-          </form>
-          {% endif %}
-          {% if u.status != 'rejected' %}
-          <form method="POST" action="{{ url_for('reject_user', user_id=u.id) }}" style="display:inline;">
-            <button type="submit" style="width:auto; padding:6px 10px; margin:0 0 0 6px; font-size:12px; background:#dc2626;">Reject</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {% for u in users %}
+  <div style="display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+    <!-- Main info card -->
+    <div style="flex:2; min-width:220px; background:#eff6ff; border-radius:10px; padding:14px; position:relative;">
+      <div style="position:absolute; top:12px; right:12px; width:36px; height:36px; border-radius:50%; background:#cbd5e1; display:flex; align-items:center; justify-content:center; font-size:14px; color:#475569; font-weight:600;">
+        {{ u.username[0]|upper }}
+      </div>
+      <div style="font-family:monospace; font-size:13px; color:#1e3a8a; font-weight:600;">{{ u.unique_id }}</div>
+      <div style="font-size:15px; font-weight:600; margin-top:2px;">{{ u.username }}</div>
+      <div style="font-size:12px; color:#6b7280; margin-top:6px;">
+        Created: {{ u.created_at.strftime('%d %b %Y, %H:%M') if u.created_at else '-' }}
+      </div>
+      <div style="font-size:12px; color:#6b7280;">
+        Referred by:
+        {% if u.referred_by %}
+          {{ u.referrer_username }} ({{ u.referred_by }})
+        {% else %}
+          Self / Direct
+        {% endif %}
+      </div>
+      <div style="font-size:12px; margin-top:6px;">
+        Account status:
+        {% if u.status == 'approved' %}<span style="color:#16a34a; font-weight:600;">Approved</span>
+        {% elif u.status == 'rejected' %}<span style="color:#dc2626; font-weight:600;">Rejected</span>
+        {% else %}<span style="color:#d97706; font-weight:600;">Pending</span>{% endif %}
+      </div>
+      <div style="font-size:12px; margin-top:2px;">
+        Password request:
+        {% if u.reset_status == 'pending' %}<span style="color:#d97706; font-weight:600;">Pending</span>
+        {% elif u.reset_status == 'approved' %}<span style="color:#16a34a; font-weight:600;">Approved</span>
+        {% else %}<span style="color:#9ca3af;">No request</span>{% endif %}
+      </div>
+
+      <div style="margin-top:10px; display:flex; gap:6px; flex-wrap:wrap;">
+        {% if u.status != 'approved' %}
+        <form method="POST" action="{{ url_for('approve_user', user_id=u.id) }}">
+          <button type="submit" style="width:auto; margin:0; padding:6px 12px; font-size:12px; background:#16a34a;">Accept</button>
+        </form>
+        {% endif %}
+        {% if u.status != 'rejected' %}
+        <form method="POST" action="{{ url_for('reject_user', user_id=u.id) }}">
+          <button type="submit" style="width:auto; margin:0; padding:6px 12px; font-size:12px; background:#dc2626;">Reject</button>
+        </form>
+        {% endif %}
+        {% if u.reset_status == 'pending' %}
+        <form method="POST" action="{{ url_for('approve_reset', user_id=u.id) }}">
+          <button type="submit" style="width:auto; margin:0; padding:6px 12px; font-size:12px; background:#0891b2;">Approve Reset</button>
+        </form>
+        <form method="POST" action="{{ url_for('reject_reset', user_id=u.id) }}">
+          <button type="submit" style="width:auto; margin:0; padding:6px 12px; font-size:12px; background:#6b7280;">Deny Reset</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Details card -->
+    <div style="flex:1; min-width:160px; background:#eff6ff; border-radius:10px; padding:14px;">
+      <div style="font-size:12px; font-weight:600; color:#1e3a8a; margin-bottom:6px;">Details</div>
+      <div style="font-size:12px; color:#374151;">Name: {{ u.username }}</div>
+      <div style="font-size:12px; color:#374151;">Email: {{ u.email }}</div>
+      <div style="font-size:12px; color:#374151;">Phone: {{ u.phone or 'Not provided' }}</div>
+      <div style="font-size:12px; color:#374151;">Address: {{ u.address or 'Not provided' }}</div>
+    </div>
+  </div>
+  {% endfor %}
 {% endif %}
 <div class="switch-link"><a href="{{ url_for('logout') }}">Log Out</a></div>
 {% endblock %}
