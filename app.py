@@ -316,26 +316,30 @@ def forgot_password():
                     flash("If that account exists and is approved, a reset request has been submitted.")
                     return redirect(url_for("forgot_password"))
 
-                cur.execute(
-                    "UPDATE users SET reset_status='pending' WHERE id=%s", (user["id"],)
-                )
-                conn.commit()
+                # Don't clobber an already-approved reset with a fresh 'pending'.
+                if user["reset_status"] != "approved":
+                    cur.execute(
+                        "UPDATE users SET reset_status='pending' WHERE id=%s", (user["id"],)
+                    )
+                    conn.commit()
         finally:
             conn.close()
 
-        session["reset_identifier"] = identifier
         flash("Your password reset request has been submitted.")
-        return redirect(url_for("reset_password"))
+        return redirect(url_for("reset_password", identifier=identifier))
 
     return render_template("forgot_password.html")
 
 
 @app.route("/reset-password", methods=["GET", "POST"])
 def reset_password():
-    identifier = session.get("reset_identifier")
+    # Accept the identifier from the URL (works even if the browser/session
+    # was closed while waiting for admin approval) or fall back to a form
+    # field on this same page for re-entry.
+    identifier = request.args.get("identifier") or request.form.get("identifier")
+
     if not identifier:
-        flash("Please request a password reset first.")
-        return redirect(url_for("forgot_password"))
+        return render_template("reset_password.html", need_identifier=True)
 
     conn = get_db_connection()
     try:
@@ -349,26 +353,28 @@ def reset_password():
         conn.close()
 
     if not user:
-        session.pop("reset_identifier", None)
-        flash("Please request a password reset first.")
-        return redirect(url_for("forgot_password"))
+        flash("No account found with that username/email.")
+        return render_template("reset_password.html", need_identifier=True)
 
     if user["reset_status"] == "pending":
-        return render_template("reset_password.html", awaiting_approval=True)
+        return render_template(
+            "reset_password.html", awaiting_approval=True, identifier=identifier
+        )
 
     if user["reset_status"] != "approved":
-        session.pop("reset_identifier", None)
-        flash("No approved reset request found. Please request again.")
+        flash("No pending or approved reset request found for that account. Please request again.")
         return redirect(url_for("forgot_password"))
 
     # reset_status == 'approved' -- admin has cleared this user to set a new password
-    if request.method == "POST":
+    if request.method == "POST" and request.form.get("password"):
         new_password = request.form.get("password", "")
 
         strong, message = is_strong_password(new_password)
         if not strong:
             flash(message)
-            return redirect(url_for("reset_password"))
+            return render_template(
+                "reset_password.html", awaiting_approval=False, identifier=identifier
+            )
 
         conn = get_db_connection()
         try:
@@ -381,11 +387,12 @@ def reset_password():
         finally:
             conn.close()
 
-        session.pop("reset_identifier", None)
         flash("Password reset successfully. Please log in.")
         return redirect(url_for("login"))
 
-    return render_template("reset_password.html", awaiting_approval=False)
+    return render_template(
+        "reset_password.html", awaiting_approval=False, identifier=identifier
+    )
 
 
 # ---- Google login ----
@@ -421,37 +428,17 @@ def google_callback():
             user = cur.fetchone()
 
             if not user:
-                # brand new signup via Google
-                base_username = re.sub(r"[^a-zA-Z0-9]", "", display_name).lower() or "user"
-                username = base_username
-                suffix = 0
-                while True:
-                    cur.execute("SELECT id FROM users WHERE username=%s", (username,))
-                    if not cur.fetchone():
-                        break
-                    suffix += 1
-                    username = f"{base_username}{suffix}"
-
-                referred_by = None
-                ref_code = session.pop("pending_ref", None)
-                if ref_code:
-                    cur.execute("SELECT unique_id FROM users WHERE unique_id=%s", (ref_code,))
-                    ref_row = cur.fetchone()
-                    if ref_row:
-                        referred_by = ref_row["unique_id"]
-
-                cur.execute(
-                    """INSERT INTO users (username, email, password, role, status, google_id, referred_by)
-                       VALUES (%s, %s, NULL, 'user', 'pending', %s, %s) RETURNING id""",
-                    (username, email, google_id, referred_by),
-                )
-                new_id = cur.fetchone()["id"]
-                unique_id = f"REG{new_id:06d}"
-                cur.execute("UPDATE users SET unique_id=%s WHERE id=%s", (unique_id, new_id))
-                conn.commit()
-                flash(f"Registered via Google! Your Registration ID is {unique_id}. "
-                      f"An admin must approve your account before you can log in.")
-                return redirect(url_for("login"))
+                # Brand new signup via Google -- don't create the account yet.
+                # Stash their Google info and send them to a form to fill in
+                # the remaining details (username, phone, address, password).
+                suggested_username = re.sub(r"[^a-zA-Z0-9]", "", display_name).lower() or "user"
+                session["google_pending"] = {
+                    "google_id": google_id,
+                    "email": email,
+                    "name": display_name,
+                    "suggested_username": suggested_username,
+                }
+                return redirect(url_for("complete_google_profile"))
 
             if user["status"] == "pending":
                 flash("Your account is awaiting admin approval.")
@@ -466,6 +453,78 @@ def google_callback():
         conn.close()
 
 
+@app.route("/complete-google-profile", methods=["GET", "POST"])
+def complete_google_profile():
+    pending = session.get("google_pending")
+    if not pending:
+        flash("Please sign in with Google first.")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        phone = request.form.get("phone", "").strip()
+        address = request.form.get("address", "").strip()
+        password = request.form.get("password", "")
+
+        if not username or not password:
+            flash("Username and password are required.")
+            return redirect(url_for("complete_google_profile"))
+
+        strong, message = is_strong_password(password)
+        if not strong:
+            flash(message)
+            return redirect(url_for("complete_google_profile"))
+
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM users WHERE username=%s", (username,))
+                if cur.fetchone():
+                    flash("That username is already taken. Please choose another.")
+                    return redirect(url_for("complete_google_profile"))
+
+                referred_by = None
+                ref_code = session.pop("pending_ref", None)
+                if ref_code:
+                    cur.execute("SELECT unique_id FROM users WHERE unique_id=%s", (ref_code,))
+                    ref_row = cur.fetchone()
+                    if ref_row:
+                        referred_by = ref_row["unique_id"]
+
+                cur.execute(
+                    """INSERT INTO users (username, email, password, role, status,
+                                           google_id, referred_by, phone, address)
+                       VALUES (%s, %s, %s, 'user', 'pending', %s, %s, %s, %s) RETURNING id""",
+                    (
+                        username,
+                        pending["email"],
+                        generate_password_hash(password),
+                        pending["google_id"],
+                        referred_by,
+                        phone or None,
+                        address or None,
+                    ),
+                )
+                new_id = cur.fetchone()["id"]
+                unique_id = f"REG{new_id:06d}"
+                cur.execute("UPDATE users SET unique_id=%s WHERE id=%s", (unique_id, new_id))
+                conn.commit()
+        finally:
+            conn.close()
+
+        session.pop("google_pending", None)
+        flash(f"Registered via Google! Your Registration ID is {unique_id}. "
+              f"An admin must approve your account before you can log in.")
+        return redirect(url_for("login"))
+
+    return render_template(
+        "complete_google_profile.html",
+        email=pending["email"],
+        name=pending["name"],
+        suggested_username=pending["suggested_username"],
+    )
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard():
@@ -475,7 +534,7 @@ def dashboard():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT COUNT(*) AS c FROM users WHERE referred_by=%s",
+                "SELECT COUNT(*) AS c FROM users WHERE referred_by=%s AND status='approved'",
                 (session.get("unique_id"),),
             )
             referral_count = cur.fetchone()["c"]
@@ -487,6 +546,8 @@ def dashboard():
             upline_id = upline_row["referred_by"] if upline_row else None
     finally:
         conn.close()
+
+    amount = referral_count * 100
 
     if referral_count >= 10:
         level = "Level 4 - Gold"
@@ -505,6 +566,7 @@ def dashboard():
         referral_count=referral_count,
         upline_id=upline_id,
         level=level,
+        amount=amount,
     )
 
 
