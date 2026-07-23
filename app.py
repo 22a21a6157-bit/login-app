@@ -1,8 +1,6 @@
 import os
 import re
-import random
 import requests
-from datetime import datetime, timedelta
 import psycopg2
 import psycopg2.extras
 from flask import Flask, render_template, request, redirect, url_for, session, flash
@@ -98,6 +96,9 @@ def init_db():
                     unique_id VARCHAR(20) UNIQUE,
                     google_id VARCHAR(255) UNIQUE,
                     referred_by VARCHAR(20),
+                    reset_status VARCHAR(20) NOT NULL DEFAULT 'none',
+                    phone VARCHAR(20),
+                    address VARCHAR(255),
                     otp_code VARCHAR(10),
                     otp_expiry TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -110,6 +111,9 @@ def init_db():
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by VARCHAR(20);")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_code VARCHAR(10);")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_expiry TIMESTAMP;")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_status VARCHAR(20) NOT NULL DEFAULT 'none';")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(20);")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS address VARCHAR(255);")
             cur.execute("ALTER TABLE users ALTER COLUMN password DROP NOT NULL;")
             conn.commit()
 
@@ -203,6 +207,8 @@ def register():
         username = request.form.get("username", "").strip()
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
+        phone = request.form.get("phone", "").strip()
+        address = request.form.get("address", "").strip()
         ref_code = request.form.get("ref", "").strip().upper()
 
         if not username or not email or not password:
@@ -238,9 +244,9 @@ def register():
                         referred_by = ref_row["unique_id"]
 
                 cur.execute(
-                    """INSERT INTO users (username, email, password, role, status, referred_by)
-                       VALUES (%s, %s, %s, 'user', 'pending', %s) RETURNING id""",
-                    (username, email, hashed_password, referred_by),
+                    """INSERT INTO users (username, email, password, role, status, referred_by, phone, address)
+                       VALUES (%s, %s, %s, 'user', 'pending', %s, %s, %s) RETURNING id""",
+                    (username, email, hashed_password, referred_by, phone or None, address or None),
                 )
                 new_id = cur.fetchone()["id"]
                 unique_id = f"REG{new_id:06d}"
@@ -306,32 +312,19 @@ def forgot_password():
                 )
                 user = cur.fetchone()
 
-                if not user or not user["email"] or user["status"] != "approved":
-                    flash("If that account exists and is approved, an OTP has been sent to its email.")
+                if not user or user["status"] != "approved":
+                    flash("If that account exists and is approved, a reset request has been submitted.")
                     return redirect(url_for("forgot_password"))
 
-                otp = f"{random.randint(0, 999999):06d}"
-                expiry = datetime.utcnow() + timedelta(minutes=10)
                 cur.execute(
-                    "UPDATE users SET otp_code=%s, otp_expiry=%s WHERE id=%s",
-                    (otp, expiry, user["id"]),
+                    "UPDATE users SET reset_status='pending' WHERE id=%s", (user["id"],)
                 )
                 conn.commit()
-
-            sent = send_email(
-                user["email"],
-                "Your password reset OTP",
-                f"Your OTP code is: {otp}\nIt expires in 10 minutes.\n\n"
-                f"If you didn't request this, you can ignore this email.",
-            )
         finally:
             conn.close()
 
         session["reset_identifier"] = identifier
-        if sent:
-            flash("An OTP has been sent to your registered email.")
-        else:
-            flash("Could not send email right now -- check mail configuration, or contact the admin.")
+        flash("Your password reset request has been submitted.")
         return redirect(url_for("reset_password"))
 
     return render_template("forgot_password.html")
@@ -341,11 +334,35 @@ def forgot_password():
 def reset_password():
     identifier = session.get("reset_identifier")
     if not identifier:
-        flash("Please request an OTP first.")
+        flash("Please request a password reset first.")
         return redirect(url_for("forgot_password"))
 
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM users WHERE username=%s OR email=%s",
+                (identifier, identifier),
+            )
+            user = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not user:
+        session.pop("reset_identifier", None)
+        flash("Please request a password reset first.")
+        return redirect(url_for("forgot_password"))
+
+    if user["reset_status"] == "pending":
+        return render_template("reset_password.html", awaiting_approval=True)
+
+    if user["reset_status"] != "approved":
+        session.pop("reset_identifier", None)
+        flash("No approved reset request found. Please request again.")
+        return redirect(url_for("forgot_password"))
+
+    # reset_status == 'approved' -- admin has cleared this user to set a new password
     if request.method == "POST":
-        otp_entered = request.form.get("otp", "").strip()
         new_password = request.form.get("password", "")
 
         strong, message = is_strong_password(new_password)
@@ -357,46 +374,18 @@ def reset_password():
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT * FROM users WHERE username=%s OR email=%s",
-                    (identifier, identifier),
-                )
-                user = cur.fetchone()
-
-                if (
-                    not user
-                    or not user["otp_code"]
-                    or user["otp_code"] != otp_entered
-                    or not user["otp_expiry"]
-                    or user["otp_expiry"] < datetime.utcnow()
-                ):
-                    flash("Invalid or expired OTP. Please request a new one.")
-                    return redirect(url_for("reset_password"))
-
-                cur.execute(
-                    "UPDATE users SET password=%s, otp_code=NULL, otp_expiry=NULL WHERE id=%s",
+                    "UPDATE users SET password=%s, reset_status='none' WHERE id=%s",
                     (generate_password_hash(new_password), user["id"]),
                 )
                 conn.commit()
-
-                cur.execute("SELECT email FROM users WHERE role='admin'")
-                admin_emails = [row["email"] for row in cur.fetchall() if row["email"]]
-                reset_username = user["username"]
         finally:
             conn.close()
-
-        for admin_email in admin_emails:
-            send_email(
-                admin_email,
-                "Password reset notification",
-                f"User '{reset_username}' just reset their password via OTP.\n"
-                f"Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
-            )
 
         session.pop("reset_identifier", None)
         flash("Password reset successfully. Please log in.")
         return redirect(url_for("login"))
 
-    return render_template("reset_password.html")
+    return render_template("reset_password.html", awaiting_approval=False)
 
 
 # ---- Google login ----
@@ -481,11 +470,41 @@ def google_callback():
 @login_required
 def dashboard():
     referral_link = url_for("register", ref=session.get("unique_id"), _external=True)
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM users WHERE referred_by=%s",
+                (session.get("unique_id"),),
+            )
+            referral_count = cur.fetchone()["c"]
+
+            cur.execute(
+                "SELECT referred_by FROM users WHERE id=%s", (session["user_id"],)
+            )
+            upline_row = cur.fetchone()
+            upline_id = upline_row["referred_by"] if upline_row else None
+    finally:
+        conn.close()
+
+    if referral_count >= 10:
+        level = "Level 4 - Gold"
+    elif referral_count >= 5:
+        level = "Level 3 - Silver"
+    elif referral_count >= 1:
+        level = "Level 2 - Bronze"
+    else:
+        level = "Level 1 - Starter"
+
     return render_template(
         "dashboard.html",
         username=session["username"],
         unique_id=session.get("unique_id"),
         referral_link=referral_link,
+        referral_count=referral_count,
+        upline_id=upline_id,
+        level=level,
     )
 
 
@@ -506,7 +525,8 @@ def admin_panel():
             cur.execute(
                 """
                 SELECT u.id, u.unique_id, u.username, u.email, u.status,
-                       u.referred_by, r.username AS referrer_username
+                       u.referred_by, u.reset_status, u.phone, u.address,
+                       u.created_at, r.username AS referrer_username
                 FROM users u
                 LEFT JOIN users r ON u.referred_by = r.unique_id
                 WHERE u.role != 'admin'
@@ -514,9 +534,24 @@ def admin_panel():
                 """
             )
             users = cur.fetchall()
+
+            cur.execute("SELECT COUNT(*) AS c FROM users WHERE role != 'admin' AND status='pending'")
+            pending_count = cur.fetchone()["c"]
+
+            cur.execute("SELECT COUNT(*) AS c FROM users WHERE role != 'admin' AND status='approved'")
+            total_participants = cur.fetchone()["c"]
+
+            cur.execute("SELECT COUNT(*) AS c FROM users WHERE role != 'admin' AND reset_status='pending'")
+            password_requests = cur.fetchone()["c"]
     finally:
         conn.close()
-    return render_template("admin.html", users=users)
+    return render_template(
+        "admin.html",
+        users=users,
+        pending_count=pending_count,
+        total_participants=total_participants,
+        password_requests=password_requests,
+    )
 
 
 @app.route("/admin/approve/<int:user_id>", methods=["POST"])
@@ -544,6 +579,34 @@ def reject_user(user_id):
     finally:
         conn.close()
     flash("User rejected.")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/approve-reset/<int:user_id>", methods=["POST"])
+@admin_required
+def approve_reset(user_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET reset_status='approved' WHERE id=%s", (user_id,))
+            conn.commit()
+    finally:
+        conn.close()
+    flash("Password reset approved -- the user can now set a new password.")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/reject-reset/<int:user_id>", methods=["POST"])
+@admin_required
+def reject_reset(user_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET reset_status='none' WHERE id=%s", (user_id,))
+            conn.commit()
+    finally:
+        conn.close()
+    flash("Password reset request denied.")
     return redirect(url_for("admin_panel"))
 
 
