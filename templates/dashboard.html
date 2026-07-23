@@ -1,35 +1,63 @@
 {% extends "base.html" %}
-{% block title %}Dashboard{% endblock %}
+{% block title %}User Dashboard{% endblock %}
 {% block content %}
-<h2>Welcome, {{ username }}!</h2>
-<p style="text-align:center; color:#374151;">You are logged in successfully.</p>
-<p style="text-align:center; color:#6b7280; font-size:13px;">Your ID: <strong>{{ unique_id }}</strong></p>
+<h2>User Dashboard</h2>
+
+<div style="display:flex; gap:10px; flex-wrap:wrap;">
+  <div style="flex:1; min-width:220px; background:#eff6ff; border-radius:10px; padding:12px 14px;">
+    <div style="font-size:12px; color:#1e3a8a; font-weight:600;">Smart Contract ID</div>
+    <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+      <div style="font-size:14px; font-family:monospace;">{{ username }}</div>
+      <button type="button" onclick="copyText('{{ username }}', 'copyMsg1')"
+              style="width:auto; margin:0; padding:4px 10px; font-size:11px; background:#4f46e5;">Copy</button>
+    </div>
+    <div id="copyMsg1" style="font-size:11px; color:#16a34a; display:none; margin-top:2px;">Copied!</div>
+  </div>
+  <div style="flex:1; min-width:160px; background:#eff6ff; border-radius:10px; padding:12px 14px;">
+    <div style="font-size:12px; color:#1e3a8a; font-weight:600;">My Level</div>
+    <div style="font-size:14px; margin-top:4px;">{{ level }}</div>
+  </div>
+</div>
+
+<div style="background:#eff6ff; border-radius:10px; padding:12px 14px; margin-top:10px;">
+  <div style="font-size:12px; color:#1e3a8a; font-weight:600;">My Id</div>
+  <div style="font-size:14px; font-family:monospace; margin-top:4px;">{{ unique_id }}</div>
+</div>
+
+<div style="background:#eff6ff; border-radius:10px; padding:12px 14px; margin-top:10px;">
+  <div style="font-size:12px; color:#1e3a8a; font-weight:600;">My Upline ID</div>
+  <div style="font-size:14px; margin-top:4px;">{{ upline_id or 'Direct (no referrer)' }}</div>
+</div>
+
+<div style="background:#eff6ff; border-radius:10px; padding:12px 14px; margin-top:10px;">
+  <div style="font-size:12px; color:#1e3a8a; font-weight:600;">Total Number of Refers</div>
+  <div style="font-size:14px; margin-top:4px;">{{ referral_count }}</div>
+</div>
+
+<div style="background:#eff6ff; border-radius:10px; padding:12px 14px; margin-top:10px;">
+  <div style="font-size:12px; color:#1e3a8a; font-weight:600;">Amount ($)</div>
+  <div style="font-size:14px; margin-top:4px;">0.00</div>
+</div>
 
 <div style="margin-top:20px; padding:16px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px;">
   <div style="font-weight:600; color:#166534; margin-bottom:8px;">🎁 Refer a Friend</div>
   <p style="font-size:13px; color:#374151; margin:0 0 10px 0;">
-    Share this link. When someone registers through it, you'll show up as
-    their referrer in the admin panel.
+    Share this link. Anyone who registers through it will show your ID as their upline.
   </p>
   <div style="display:flex; gap:6px;">
     <input id="refLink" type="text" value="{{ referral_link }}" readonly
            onclick="this.select();"
            style="flex:1; padding:9px 10px; border:1px solid #d1d5db; border-radius:8px; font-size:12px; background:#fff;">
-    <button type="button" onclick="copyRefLink()"
-            style="width:auto; margin:0; padding:9px 14px; font-size:13px; background:#16a34a;">
-      Copy
-    </button>
+    <button type="button" onclick="copyText('{{ referral_link }}', 'copyMsg2')"
+            style="width:auto; margin:0; padding:9px 14px; font-size:13px; background:#16a34a;">Copy</button>
   </div>
-  <div id="copyMsg" style="font-size:12px; color:#16a34a; margin-top:6px; display:none;">Copied!</div>
+  <div id="copyMsg2" style="font-size:12px; color:#16a34a; margin-top:6px; display:none;">Copied!</div>
 </div>
 
 <script>
-function copyRefLink() {
-  const input = document.getElementById('refLink');
-  input.select();
-  input.setSelectionRange(0, 99999);
-  navigator.clipboard.writeText(input.value).then(function() {
-    const msg = document.getElementById('copyMsg');
+function copyText(text, msgId) {
+  navigator.clipboard.writeText(text).then(function() {
+    const msg = document.getElementById(msgId);
     msg.style.display = 'block';
     setTimeout(() => { msg.style.display = 'none'; }, 2000);
   });
