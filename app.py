@@ -56,7 +56,7 @@ def send_email(to_email, subject, body):
     msg["From"] = MAIL_USERNAME
     msg["To"] = to_email
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
             server.starttls()
             server.login(MAIL_USERNAME, MAIL_PASSWORD)
             server.sendmail(MAIL_USERNAME, [to_email], msg.as_string())
