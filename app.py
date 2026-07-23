@@ -1,6 +1,9 @@
 import os
 import re
-import secrets
+import random
+import smtplib
+from email.mime.text import MIMEText
+from datetime import datetime, timedelta
 import psycopg2
 import psycopg2.extras
 from flask import Flask, render_template, request, redirect, url_for, session, flash
@@ -38,6 +41,31 @@ def inject_google_flag():
     return {"google_login_enabled": GOOGLE_LOGIN_ENABLED}
 
 
+# ---- Email (OTP) config ----
+MAIL_USERNAME = os.environ.get("MAIL_USERNAME")
+MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD")
+MAIL_ENABLED = bool(MAIL_USERNAME and MAIL_PASSWORD)
+
+
+def send_email(to_email, subject, body):
+    if not MAIL_ENABLED:
+        print(f"[MAIL DISABLED] Would send to {to_email}: {subject}\n{body}")
+        return False
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = MAIL_USERNAME
+    msg["To"] = to_email
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(MAIL_USERNAME, MAIL_PASSWORD)
+            server.sendmail(MAIL_USERNAME, [to_email], msg.as_string())
+        return True
+    except Exception as e:
+        print(f"Email send failed: {e}")
+        return False
+
+
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
 
@@ -61,6 +89,8 @@ def init_db():
                     unique_id VARCHAR(20) UNIQUE,
                     google_id VARCHAR(255) UNIQUE,
                     referred_by VARCHAR(20),
+                    otp_code VARCHAR(10),
+                    otp_expiry TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 """
@@ -69,6 +99,8 @@ def init_db():
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS unique_id VARCHAR(20) UNIQUE;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) UNIQUE;")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by VARCHAR(20);")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_code VARCHAR(10);")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_expiry TIMESTAMP;")
             cur.execute("ALTER TABLE users ALTER COLUMN password DROP NOT NULL;")
             conn.commit()
 
@@ -249,6 +281,101 @@ def login():
         return redirect(url_for("dashboard"))
 
     return render_template("login.html")
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "POST":
+        identifier = request.form.get("identifier", "").strip()
+
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM users WHERE username=%s OR email=%s",
+                    (identifier, identifier),
+                )
+                user = cur.fetchone()
+
+                if not user or not user["email"]:
+                    flash("If that account exists, an OTP has been sent to its email.")
+                    return redirect(url_for("forgot_password"))
+
+                otp = f"{random.randint(0, 999999):06d}"
+                expiry = datetime.utcnow() + timedelta(minutes=10)
+                cur.execute(
+                    "UPDATE users SET otp_code=%s, otp_expiry=%s WHERE id=%s",
+                    (otp, expiry, user["id"]),
+                )
+                conn.commit()
+
+            sent = send_email(
+                user["email"],
+                "Your password reset OTP",
+                f"Your OTP code is: {otp}\nIt expires in 10 minutes.\n\n"
+                f"If you didn't request this, you can ignore this email.",
+            )
+        finally:
+            conn.close()
+
+        session["reset_identifier"] = identifier
+        if sent:
+            flash("An OTP has been sent to your registered email.")
+        else:
+            flash("Could not send email right now -- check mail configuration, or contact the admin.")
+        return redirect(url_for("reset_password"))
+
+    return render_template("forgot_password.html")
+
+
+@app.route("/reset-password", methods=["GET", "POST"])
+def reset_password():
+    identifier = session.get("reset_identifier")
+    if not identifier:
+        flash("Please request an OTP first.")
+        return redirect(url_for("forgot_password"))
+
+    if request.method == "POST":
+        otp_entered = request.form.get("otp", "").strip()
+        new_password = request.form.get("password", "")
+
+        strong, message = is_strong_password(new_password)
+        if not strong:
+            flash(message)
+            return redirect(url_for("reset_password"))
+
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM users WHERE username=%s OR email=%s",
+                    (identifier, identifier),
+                )
+                user = cur.fetchone()
+
+                if (
+                    not user
+                    or not user["otp_code"]
+                    or user["otp_code"] != otp_entered
+                    or not user["otp_expiry"]
+                    or user["otp_expiry"] < datetime.utcnow()
+                ):
+                    flash("Invalid or expired OTP. Please request a new one.")
+                    return redirect(url_for("reset_password"))
+
+                cur.execute(
+                    "UPDATE users SET password=%s, otp_code=NULL, otp_expiry=NULL WHERE id=%s",
+                    (generate_password_hash(new_password), user["id"]),
+                )
+                conn.commit()
+        finally:
+            conn.close()
+
+        session.pop("reset_identifier", None)
+        flash("Password reset successfully. Please log in.")
+        return redirect(url_for("login"))
+
+    return render_template("reset_password.html")
 
 
 # ---- Google login ----
