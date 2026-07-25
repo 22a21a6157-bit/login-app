@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block extra_css %}
+<style>
+.dashboard-nav { background: rgba(15,23,42,0.95); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(255,255,255,0.05); }
+.stat-card { background: linear-gradient(135deg, rgba(30,41,59,0.8), rgba(15,23,42,0.9)); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 1.5rem; transition: transform 0.2s; }
+.stat-card:hover { transform: translateY(-4px); }
+.stat-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
+.referral-box { background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 16px; padding: 1.5rem; }
+.level-badge { display: inline-block; padding: 0.35rem 1rem; border-radius: 999px; font-weight: 600; font-size: 0.85rem; }
+.level-Starter { background: rgba(148,163,184,0.2); color: #94a3b8; }
+.level-Bronze { background: rgba(180,83,9,0.2); color: #f59e0b; }
+.level-Silver { background: rgba(100,116,139,0.2); color: #cbd5e1; }
+.level-Gold { background: rgba(234,179,8,0.2); color: #fbbf24; }
+.level-Diamond { background: rgba(6,182,212,0.2); color: #22d3ee; }
+.level-Legend { background: linear-gradient(90deg, #f59e0b, #ef4444); color: white; }
+</style>
+{% endblock %}
+{% block content %}
+<nav class="navbar navbar-expand-lg dashboard-nav sticky-top">
+    <div class="container">
+        <a class="navbar-brand fw-bold" href="#"><i class="bi bi-hexagon-fill text-primary"></i> ReferralPro</a>
+        <div class="d-flex align-items-center gap-3">
+            <span class="badge level-badge level-{{ user.user_level }}">{{ user.user_level }}</span>
+            <div class="dropdown">
+                <button class="btn btn-dark dropdown-toggle" data-bs-toggle="dropdown">
+                    <i class="bi bi-person-circle"></i> {{ session.full_name }}
+                </button>
+                <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end">
+                    <li><a class="dropdown-item" href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<div class="container py-4">
+    <div class="mb-4">
+        <h3 class="fw-bold">Welcome, {{ user.full_name }}! <span class="fs-6 fw-normal text-muted">{{ now.strftime('%A, %d %B %Y') }}</span></h3>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-4 col-lg-2">
+            <div class="stat-card">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <div class="stat-icon bg-primary bg-opacity-10 text-primary"><i class="bi bi-fingerprint"></i></div>
+                </div>
+                <div class="text-muted small">Smart Contract ID</div>
+                <div class="font-monospace fw-bold text-truncate" id="public-id">{{ user.public_user_id }}</div>
+                <button class="btn btn-sm btn-outline-secondary mt-2" onclick="copyToClipboard('{{ user.public_user_id }}')">
+                    <i class="bi bi-clipboard"></i> Copy
+                </button>
+            </div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="stat-card">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <div class="stat-icon bg-warning bg-opacity-10 text-warning"><i class="bi bi-trophy"></i></div>
+                </div>
+                <div class="text-muted small">My Level</div>
+                <div class="fw-bold fs-5">{{ user.user_level }}</div>
+            </div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="stat-card">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <div class="stat-icon bg-info bg-opacity-10 text-info"><i class="bi bi-hash"></i></div>
+                </div>
+                <div class="text-muted small">My ID</div>
+                <div class="font-monospace fw-bold">{{ user.id }}</div>
+            </div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="stat-card">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <div class="stat-icon bg-secondary bg-opacity-10 text-secondary"><i class="bi bi-arrow-up-circle"></i></div>
+                </div>
+                <div class="text-muted small">My Upline</div>
+                <div class="font-monospace fw-bold text-truncate">{{ user.referral_id or 'None' }}</div>
+            </div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="stat-card">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <div class="stat-icon bg-success bg-opacity-10 text-success"><i class="bi bi-people"></i></div>
+                </div>
+                <div class="text-muted small">Approved Referrals</div>
+                <div class="fw-bold fs-4">{{ user.referral_count }}</div>
+            </div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="stat-card">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <div class="stat-icon bg-success bg-opacity-10 text-success"><i class="bi bi-currency-dollar"></i></div>
+                </div>
+                <div class="text-muted small">Amount Earned</div>
+                <div class="fw-bold fs-4 text-success">{{ format_currency(user.amount_earned) }}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="referral-box mb-4">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h5 class="fw-bold mb-1"><i class="bi bi-share"></i> Your Referral Link</h5>
+                <p class="mb-0 opacity-75 small">Share this link to earn $100 for each approved referral</p>
+            </div>
+            <div class="col-md-4">
+                <div class="input-group">
+                    <input type="text" class="form-control bg-dark border-0" value="{{ ref_link }}" id="ref-link" readonly>
+                    <button class="btn btn-light" onclick="copyToClipboard('{{ ref_link }}')"><i class="bi bi-clipboard"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-people-fill"></i> Recent Referrals</h5>
+                    <span class="badge bg-success">{{ referrals|length }} Total</span>
+                </div>
+                <div class="card-body p-0">
+                    {% if referrals %}
+                    <div class="table-responsive">
+                        <table class="table table-dark table-hover mb-0">
+                            <thead>
+                                <tr><th>Name</th><th>Status</th><th>Joined</th><th>Reward</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for ref in referrals %}
+                                <tr>
+                                    <td><i class="bi bi-person-circle text-muted me-2"></i>{{ ref.full_name }}</td>
+                                    <td><span class="badge bg-success">Approved</span></td>
+                                    <td class="text-muted">{{ ref.approved_at.strftime('%d %b %Y') if ref.approved_at else ref.created_at.strftime('%d %b %Y') }}</td>
+                                    <td class="text-success fw-bold">$100.00</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-inbox fs-1 text-muted"></i>
+                        <p class="text-muted mt-2">No referrals yet. Share your link to get started!</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header border-secondary">
+                    <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Level Progress</h5>
+                </div>
+                <div class="card-body">
+                    <div class="text-center mb-3">
+                        <div class="display-4 fw-bold">{{ user.referral_count }}</div>
+                        <div class="text-muted">Referrals</div>
+                    </div>
+                    <div class="progress mb-3" style="height: 8px;">
+                        {% set next_level = 1 if user.referral_count < 1 else 5 if user.referral_count < 5 else 10 if user.referral_count < 10 else 25 if user.referral_count < 25 else 50 if user.referral_count < 50 else 50 %}
+                        {% set progress = (user.referral_count / next_level * 100) if next_level > 0 else 100 %}
+                        <div class="progress-bar bg-warning" style="width: {{ progress }}%"></div>
+                    </div>
+                    <div class="d-flex justify-content-between text-muted small">
+                        <span>{{ user.user_level }}</span>
+                        <span>{{ 'Bronze' if user.referral_count < 1 else 'Silver' if user.referral_count < 5 else 'Gold' if user.referral_count < 10 else 'Diamond' if user.referral_count < 25 else 'Legend' if user.referral_count < 50 else 'Max Level' }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('Copied to clipboard!', 'success');
+    });
+}
+</script>
+{% endblock %}

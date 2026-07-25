@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Complete Profile{% endblock %}
+{% block content %}
+<div class="auth-page">
+    <div class="auth-glass" style="max-width: 500px;">
+        <div class="text-center mb-4">
+            <div class="auth-logo"><i class="bi bi-google"></i></div>
+            <h2 class="fw-bold">Complete Your Profile</h2>
+            <p class="text-muted">Google: {{ email }}</p>
+        </div>
+        <form method="POST" action="{{ url_for('complete_google_profile') }}">
+            <div class="mb-3">
+                <label class="form-label">Full Name</label>
+                <input type="text" name="full_name" class="form-control" value="{{ name }}" placeholder="Your full name" required>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Phone</label>
+                    <input type="tel" name="phone" class="form-control" placeholder="+1 234 567 890">
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Referral ID <small class="text-muted">(optional)</small></label>
+                    <input type="text" name="referral_id" class="form-control" placeholder="F2C91A84D7E5B601" value="{{ ref_code }}">
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Address</label>
+                <textarea name="address" class="form-control" rows="2" placeholder="Your address"></textarea>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Username</label>
+                <input type="text" name="username" class="form-control" placeholder="Choose a username" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                <div class="input-group">
+                    <input type="password" name="password" class="form-control password-field" placeholder="Min 6 characters" required>
+                    <button type="button" class="btn btn-outline-secondary toggle-password"><i class="bi bi-eye"></i></button>
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Confirm Password</label>
+                <div class="input-group">
+                    <input type="password" name="confirm_password" class="form-control password-field" placeholder="Confirm password" required>
+                    <button type="button" class="btn btn-outline-secondary toggle-password"><i class="bi bi-eye"></i></button>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary w-100 btn-glow">Complete Registration</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

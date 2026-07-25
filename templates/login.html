@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+{% block content %}
+<div class="auth-page">
+    <div class="auth-glass">
+        <div class="text-center mb-4">
+            <div class="auth-logo"><i class="bi bi-shield-lock"></i></div>
+            <h2 class="fw-bold">Welcome Back</h2>
+            <p class="text-muted">Login to your referral dashboard</p>
+        </div>
+        <form method="POST" action="{{ url_for('login') }}">
+            <div class="mb-3">
+                <label class="form-label">Username or Email</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-person"></i></span>
+                    <input type="text" name="username" class="form-control" placeholder="Enter username or email" required>
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                    <input type="password" name="password" class="form-control password-field" placeholder="Enter password" required>
+                    <button type="button" class="btn btn-outline-secondary toggle-password"><i class="bi bi-eye"></i></button>
+                </div>
+            </div>
+            <div class="d-flex justify-content-between mb-3">
+                <a href="{{ url_for('forgot_password') }}" class="text-decoration-none small">Forgot Password?</a>
+            </div>
+            <button type="submit" class="btn btn-primary w-100 btn-glow">Login</button>
+        </form>
+        <div class="text-center mt-3">
+            <a href="{{ url_for('register') }}" class="text-decoration-none">Don't have an account? <strong>Register</strong></a>
+        </div>
+        <div class="text-center mt-2">
+            <a href="{{ url_for('google_login') }}" class="btn btn-outline-light w-100 mt-2">
+                <i class="bi bi-google"></i> Sign in with Google
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
