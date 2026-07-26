@@ -179,39 +179,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Step 9: Create trigger function for referral processing on approval
-CREATE OR REPLACE FUNCTION process_referral_on_approval()
-RETURNS TRIGGER AS $$
-DECLARE
-    referrer_record RECORD;
-BEGIN
-    IF NEW.status = 'approved' AND OLD.status != 'approved' THEN
-        SELECT * INTO referrer_record FROM users WHERE public_user_id = NEW.referral_id;
-
-        IF referrer_record IS NOT NULL THEN
-            UPDATE users 
-            SET referral_count = referral_count + 1,
-                amount_earned = amount_earned + 100.00,
-                user_level = calculate_user_level(referral_count + 1)
-            WHERE public_user_id = NEW.referral_id;
-
-            UPDATE referrals 
-            SET status = 'approved', approved_at = CURRENT_TIMESTAMP
-            WHERE referred_id = NEW.public_user_id;
-        END IF;
-
-        NEW.approved_at = CURRENT_TIMESTAMP;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Step 10: Attach trigger (drop old one first if exists)
+-- Step 9: Referral crediting on approval is handled exclusively by the
+-- Flask app (see approve_user() in app.py), which also writes an
+-- admin_logs entry. A DB trigger doing the same thing used to live here
+-- but has been removed: it duplicated the app's logic (risking the
+-- referrer being credited twice), and its "referrer_record IS NOT NULL"
+-- check is a PL/pgSQL RECORD-comparison gotcha that never evaluated true
+-- even when a matching row was found - so it silently never worked.
+-- This drops it in case it was created by an earlier version of this file.
 DROP TRIGGER IF EXISTS trg_process_referral ON users;
-CREATE TRIGGER trg_process_referral
-    BEFORE UPDATE ON users
-    FOR EACH ROW
-    EXECUTE FUNCTION process_referral_on_approval();
+DROP FUNCTION IF EXISTS process_referral_on_approval();
 
 -- Step 11: Create auto-update updated_at function
 CREATE OR REPLACE FUNCTION update_updated_at_column()

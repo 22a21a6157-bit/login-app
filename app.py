@@ -2,13 +2,13 @@
 import os
 import secrets
 import re
-import base64
 import logging
 from datetime import datetime
 from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
@@ -20,10 +20,24 @@ logger = logging.getLogger(__name__)
 # ─── Configuration ─────────────────────────────────────────
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
-app.config["SESSION_COOKIE_SECURE"] = True
+# Only require HTTPS-only cookies in production. If this stays hardcoded True,
+# the session cookie is silently never set on plain HTTP (e.g. local dev),
+# which makes login look like it "succeeds" but immediately bounces back to
+# the login page. Set SESSION_COOKIE_SECURE=false in the environment for
+# local/non-HTTPS testing.
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "true").lower() == "true"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = 3600  # 1 hour
+
+# ─── Signed, expiring tokens for password reset links ────────
+# (Previously the token was just base64("<user_id>:<public_id>") with no
+# signature or expiry - since public_user_id is shown to the user in their
+# dashboard/referral link, anyone could forge a "valid" reset link for any
+# user whose public ID they know. This uses the app's secret key to sign
+# the token and enforces a 1-hour expiry.)
+reset_serializer = URLSafeTimedSerializer(app.secret_key, salt="password-reset")
+RESET_TOKEN_MAX_AGE = 3600  # 1 hour
 
 # ─── Database Pool ─────────────────────────────────────────
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -47,6 +61,26 @@ def get_db():
 
 def release_db(conn):
     db_pool.putconn(conn)
+
+# ─── Google OAuth client (registered once, not per-request) ──
+google_oauth_client = None
+if os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"):
+    try:
+        from authlib.integrations.flask_client import OAuth
+        _oauth = OAuth(app)
+        google_oauth_client = _oauth.register(
+            name="google",
+            client_id=os.environ.get("GOOGLE_CLIENT_ID", ""),
+            client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
+            server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+            client_kwargs={"scope": "openid email profile"},
+        )
+        logger.info("Google OAuth client registered")
+    except Exception as e:
+        logger.error(f"Google OAuth registration failed: {e}")
+        google_oauth_client = None
+else:
+    logger.info("Google OAuth not configured (GOOGLE_CLIENT_ID/SECRET not set)")
 
 # ─── Helpers ─────────────────────────────────────────────────
 def generate_public_id():
@@ -105,23 +139,13 @@ def index():
 @app.route("/google-login")
 def google_login():
     """Initiate Google OAuth login."""
+    if not google_oauth_client:
+        flash("Google OAuth is not configured. Please use email/password login.", "warning")
+        return redirect(url_for("login"))
+
     try:
-        from authlib.integrations.flask_client import OAuth
-        oauth = OAuth(app)
-        google = oauth.register(
-            name="google",
-            client_id=os.environ.get("GOOGLE_CLIENT_ID", ""),
-            client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
-            server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-            client_kwargs={"scope": "openid email profile"},
-        )
-
-        if not os.environ.get("GOOGLE_CLIENT_ID"):
-            flash("Google OAuth is not configured. Please use email/password login.", "warning")
-            return redirect(url_for("login"))
-
         redirect_uri = url_for("google_callback", _external=True)
-        return google.authorize_redirect(redirect_uri)
+        return google_oauth_client.authorize_redirect(redirect_uri)
     except Exception as e:
         logger.error(f"Google login init error: {e}")
         flash("Google login is temporarily unavailable. Please use email/password.", "warning")
@@ -130,18 +154,12 @@ def google_login():
 @app.route("/google-callback")
 def google_callback():
     """Handle Google OAuth callback."""
-    try:
-        from authlib.integrations.flask_client import OAuth
-        oauth = OAuth(app)
-        google = oauth.register(
-            name="google",
-            client_id=os.environ.get("GOOGLE_CLIENT_ID", ""),
-            client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
-            server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-            client_kwargs={"scope": "openid email profile"},
-        )
+    if not google_oauth_client:
+        flash("Google OAuth is not configured. Please use email/password login.", "warning")
+        return redirect(url_for("login"))
 
-        token = google.authorize_access_token()
+    try:
+        token = google_oauth_client.authorize_access_token()
         user_info = token.get("userinfo")
         if not user_info:
             flash("Google authentication failed.", "danger")
@@ -602,9 +620,11 @@ def forgot_password():
                     VALUES (%s, 'pending', NOW())
                 """, (user["id"],))
 
-                if "password_reset_status" in [c["column_name"] for c in cur.execute("""
+                cur.execute("""
                     SELECT column_name FROM information_schema.columns WHERE table_name = 'users'
-                """).fetchall()]:
+                """)
+                users_columns = [c["column_name"] for c in cur.fetchall()]
+                if "password_reset_status" in users_columns:
                     cur.execute("""
                         UPDATE users SET password_reset_status = 'requested' WHERE id = %s
                     """, (user["id"],))
@@ -631,10 +651,13 @@ def reset_password(token):
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             try:
-                decoded = base64.urlsafe_b64decode(token.encode()).decode()
-                user_id, public_id = decoded.split(":", 1)
-                user_id = int(user_id)
-            except:
+                data = reset_serializer.loads(token, max_age=RESET_TOKEN_MAX_AGE)
+                user_id = int(data["user_id"])
+                public_id = data["public_id"]
+            except SignatureExpired:
+                flash("This reset link has expired. Please request a new one.", "danger")
+                return redirect(url_for("login"))
+            except (BadSignature, KeyError, ValueError, TypeError):
                 flash("Invalid reset link.", "danger")
                 return redirect(url_for("login"))
 
@@ -902,7 +925,7 @@ def approve_reset(request_id):
                 UPDATE users SET password_reset_status = 'approved' WHERE id = %s
             """, (req["user_id"],))
 
-            token = base64.urlsafe_b64encode(f"{req['user_id']}:{req['public_user_id']}".encode()).decode()
+            token = reset_serializer.dumps({"user_id": req["user_id"], "public_id": req["public_user_id"]})
             reset_link = request.host_url.rstrip("/") + url_for("reset_password", token=token)
 
             cur.execute("""
@@ -958,9 +981,11 @@ def check_user():
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            if username:
+            if username and email:
+                cur.execute("SELECT id FROM users WHERE username = %s OR email = %s", (username, email))
+            elif username:
                 cur.execute("SELECT id FROM users WHERE username = %s", (username,))
-            elif email:
+            else:
                 cur.execute("SELECT id FROM users WHERE email = %s", (email,))
             exists = cur.fetchone() is not None
             return jsonify({"exists": exists})

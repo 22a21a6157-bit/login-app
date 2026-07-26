@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
     -- Approval & status
     status VARCHAR(20) DEFAULT 'pending',  -- pending, approved, rejected
     approved_at TIMESTAMP,
+    is_admin BOOLEAN DEFAULT FALSE,
 
     -- Password reset via admin
     password_reset_status VARCHAR(20) DEFAULT NULL,  -- requested, approved, rejected
@@ -122,47 +123,16 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ============================================
--- FUNCTION: Update Referrer on Approval
+-- NOTE: Referral crediting on approval is handled exclusively by the
+-- Flask app (see approve_user() in app.py), which also writes an
+-- admin_logs entry. A DB trigger doing the same thing used to exist here
+-- but was removed: it duplicated the app's logic (risking the referrer
+-- being credited twice), and its "referrer_record IS NOT NULL" check
+-- never evaluated true, so it silently never worked in the first place.
+-- Make sure any existing database has it removed too:
 -- ============================================
-CREATE OR REPLACE FUNCTION process_referral_on_approval()
-RETURNS TRIGGER AS $$
-DECLARE
-    referrer_record RECORD;
-BEGIN
-    -- Only process if status changed TO approved
-    IF NEW.status = 'approved' AND OLD.status != 'approved' THEN
-        -- Find referrer
-        SELECT * INTO referrer_record FROM users WHERE public_user_id = NEW.referral_id;
-
-        IF referrer_record IS NOT NULL THEN
-            -- Update referrer stats
-            UPDATE users 
-            SET 
-                referral_count = referral_count + 1,
-                amount_earned = amount_earned + 100.00,
-                user_level = calculate_user_level(referral_count + 1),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE public_user_id = NEW.referral_id;
-
-            -- Update referral record
-            UPDATE referrals 
-            SET status = 'approved', approved_at = CURRENT_TIMESTAMP
-            WHERE referred_id = NEW.public_user_id;
-        END IF;
-
-        -- Set approved_at
-        NEW.approved_at = CURRENT_TIMESTAMP;
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
 DROP TRIGGER IF EXISTS trg_process_referral ON users;
-CREATE TRIGGER trg_process_referral
-    BEFORE UPDATE ON users
-    FOR EACH ROW
-    EXECUTE FUNCTION process_referral_on_approval();
+DROP FUNCTION IF EXISTS process_referral_on_approval();
 
 -- ============================================
 -- MIGRATION NOTES FOR EXISTING DATA
