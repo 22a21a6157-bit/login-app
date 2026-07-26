@@ -240,6 +240,10 @@ def register():
             errors.append("Valid email is required.")
         if not username or len(username) < 3:
             errors.append("Username must be at least 3 characters.")
+        if not phone or not re.match(r"^\+?[0-9\s\-]{7,20}$", phone):
+            errors.append("A valid phone number is required.")
+        if not address or len(address) < 5:
+            errors.append("Address is required (min 5 chars).")
         if not password or len(password) < 6:
             errors.append("Password must be at least 6 characters.")
         if password != confirm_password:
@@ -253,9 +257,20 @@ def register():
         conn = get_db()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT id FROM users WHERE email = %s OR username = %s", (email, username))
-                if cur.fetchone():
-                    flash("Email or username already exists.", "danger")
+                cur.execute("""
+                    SELECT email, username, phone, address FROM users
+                    WHERE email = %s OR username = %s OR phone = %s OR address = %s
+                """, (email, username, phone, address))
+                existing = cur.fetchone()
+                if existing:
+                    if existing["email"] == email:
+                        flash("Email already exists.", "danger")
+                    elif existing["username"] == username:
+                        flash("Username already exists.", "danger")
+                    elif existing["phone"] == phone:
+                        flash("Phone number already exists.", "danger")
+                    else:
+                        flash("Address already exists.", "danger")
                     return render_template("register.html", ref_code=ref_code)
 
                 referrer_id = None
@@ -359,6 +374,10 @@ def complete_google_profile():
             errors.append("Full name is required.")
         if not username or len(username) < 3:
             errors.append("Username must be at least 3 characters.")
+        if not phone or not re.match(r"^\+?[0-9\s\-]{7,20}$", phone):
+            errors.append("A valid phone number is required.")
+        if not address or len(address) < 5:
+            errors.append("Address is required (min 5 chars).")
         if not password or len(password) < 6:
             errors.append("Password must be at least 6 characters.")
         if password != confirm_password:
@@ -375,10 +394,20 @@ def complete_google_profile():
         conn = get_db()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT id FROM users WHERE email = %s OR username = %s",
-                          (session["google_email"], username))
-                if cur.fetchone():
-                    flash("Email or username already exists.", "danger")
+                cur.execute("""
+                    SELECT email, username, phone, address FROM users
+                    WHERE email = %s OR username = %s OR phone = %s OR address = %s
+                """, (session["google_email"], username, phone, address))
+                existing = cur.fetchone()
+                if existing:
+                    if existing["email"] == session["google_email"]:
+                        flash("Email already exists.", "danger")
+                    elif existing["username"] == username:
+                        flash("Username already exists.", "danger")
+                    elif existing["phone"] == phone:
+                        flash("Phone number already exists.", "danger")
+                    else:
+                        flash("Address already exists.", "danger")
                     return render_template("complete_google_profile.html",
                                            email=session.get("google_email"),
                                            name=session.get("google_name", ""),
@@ -470,8 +499,18 @@ def login():
                     if col in columns:
                         select_cols.append(col)
 
-                query = f"SELECT {', '.join(select_cols)} FROM users WHERE username = %s OR email = %s"
-                cur.execute(query, (username, username))
+                # Allow login with username, email, phone, or address
+                conditions = ["username = %s", "email = %s"]
+                params = [username, username]
+                if "phone" in columns:
+                    conditions.append("phone = %s")
+                    params.append(username)
+                if "address" in columns:
+                    conditions.append("address = %s")
+                    params.append(username)
+
+                query = f"SELECT {', '.join(select_cols)} FROM users WHERE {' OR '.join(conditions)}"
+                cur.execute(query, tuple(params))
                 user = cur.fetchone()
 
                 if not user:
@@ -595,8 +634,8 @@ def forgot_password():
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT id, public_user_id, full_name, email, status
-                    FROM users WHERE username = %s OR email = %s
-                """, (identifier, identifier))
+                    FROM users WHERE username = %s OR email = %s OR phone = %s OR address = %s
+                """, (identifier, identifier, identifier, identifier))
                 user = cur.fetchone()
 
                 if not user:
@@ -644,9 +683,6 @@ def forgot_password():
 
 @app.route("/reset-password/<token>", methods=["GET", "POST"])
 def reset_password(token):
-    if "user_id" in session:
-        return redirect(url_for("dashboard"))
-
     conn = get_db()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -660,6 +696,14 @@ def reset_password(token):
             except (BadSignature, KeyError, ValueError, TypeError):
                 flash("Invalid reset link.", "danger")
                 return redirect(url_for("login"))
+
+            # If a session already exists (e.g. the admin who approved this
+            # request is still logged in, or a stale session in the same
+            # browser) it must not hijack this page - the reset form should
+            # always be shown to whoever holds the valid token. Clear any
+            # session that doesn't belong to the token's own user.
+            if session.get("user_id") != user_id:
+                session.clear()
 
             cur.execute("""
                 SELECT id, public_user_id, full_name, password_reset_status
