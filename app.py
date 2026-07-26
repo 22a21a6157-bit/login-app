@@ -849,11 +849,25 @@ def admin_dashboard():
             """)
             reset_requests = cur.fetchall()
 
+            if "password_reset_status" in user_cols:
+                cur.execute("""
+                    SELECT id, public_user_id, full_name, email, username
+                    FROM users WHERE password_reset_status = 'approved'
+                    ORDER BY updated_at DESC NULLS LAST
+                """)
+                awaiting_reset_users = cur.fetchall()
+            else:
+                awaiting_reset_users = []
+
+            reset_link_data = session.pop("reset_link_data", None)
+
             return render_template("admin.html",
                                    stats=stats,
                                    pending_users=pending_users,
                                    approved_users=approved_users,
-                                   reset_requests=reset_requests)
+                                   reset_requests=reset_requests,
+                                   awaiting_reset_users=awaiting_reset_users,
+                                   reset_link_data=reset_link_data)
     except Exception as e:
         logger.error(f"Admin dashboard error: {e}")
         flash("Error loading admin dashboard.", "danger")
@@ -979,13 +993,49 @@ def approve_reset(request_id):
 
             conn.commit()
 
+            session["reset_link_data"] = {"link": reset_link, "name": req["full_name"]}
             flash(f"Reset approved for {req['full_name']}.", "success")
-            flash(f"Reset Link: {reset_link}", "info")
 
     except Exception as e:
         conn.rollback()
         logger.error(f"Approve reset error: {e}")
         flash("Error approving reset.", "danger")
+    finally:
+        release_db(conn)
+    return redirect(url_for("admin_dashboard"))
+
+@app.route("/admin/resend-reset/<int:user_id>", methods=["POST"])
+@admin_required
+def resend_reset(user_id):
+    conn = get_db()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, public_user_id, full_name, password_reset_status
+                FROM users WHERE id = %s
+            """, (user_id,))
+            user = cur.fetchone()
+
+            if not user or user.get("password_reset_status") != "approved":
+                flash("This user has no approved reset in progress.", "warning")
+                return redirect(url_for("admin_dashboard"))
+
+            token = reset_serializer.dumps({"user_id": user["id"], "public_id": user["public_user_id"]})
+            reset_link = request.host_url.rstrip("/") + url_for("reset_password", token=token)
+
+            cur.execute("""
+                INSERT INTO admin_logs (admin_id, action, target_user_id, details, created_at)
+                VALUES (%s, 'resend_reset', %s, %s, NOW())
+            """, (session["user_id"], user["id"], f"Resent reset link for {user['public_user_id']}"))
+            conn.commit()
+
+            session["reset_link_data"] = {"link": reset_link, "name": user["full_name"]}
+            flash(f"New reset link generated for {user['full_name']}.", "success")
+
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Resend reset error: {e}")
+        flash("Error generating reset link.", "danger")
     finally:
         release_db(conn)
     return redirect(url_for("admin_dashboard"))
