@@ -25,34 +25,6 @@
 </nav>
 
 <div class="container-fluid px-4 py-4">
-    {% if reset_link_data %}
-    <div class="card bg-dark border-info mb-4" id="reset-link-card">
-        <div class="card-body d-flex align-items-center gap-3 flex-wrap">
-            <div class="flex-grow-1">
-                <div class="small text-info fw-bold mb-1"><i class="bi bi-key"></i> Reset link for {{ reset_link_data.name }}</div>
-                <input type="text" id="reset-link-input" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ reset_link_data.link }}" readonly onclick="this.select()">
-            </div>
-            <button type="button" class="btn btn-sm btn-info" onclick="copyResetLink()">
-                <i class="bi bi-clipboard"></i> <span id="copy-btn-label">Copy</span>
-            </button>
-            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('reset-link-card').remove()">
-                <i class="bi bi-x-lg"></i>
-            </button>
-        </div>
-    </div>
-    <script>
-    function copyResetLink() {
-        const input = document.getElementById('reset-link-input');
-        input.select();
-        navigator.clipboard.writeText(input.value).then(function() {
-            const label = document.getElementById('copy-btn-label');
-            label.textContent = 'Copied!';
-            setTimeout(function() { label.textContent = 'Copy'; }, 2000);
-        });
-    }
-    </script>
-    {% endif %}
-
     <h3 class="fw-bold mb-4">Dashboard Overview</h3>
 
     <div class="row g-3 mb-4">
@@ -208,29 +180,6 @@
                     {% endif %}
                 </div>
             </div>
-
-            {% if awaiting_reset_users %}
-            <div class="card bg-dark border-secondary mb-4">
-                <div class="card-header border-secondary">
-                    <h5 class="mb-0"><i class="bi bi-link-45deg text-warning"></i> Awaiting Reset (link approved)</h5>
-                </div>
-                <div class="card-body">
-                    <div class="vstack gap-3">
-                        {% for u in awaiting_reset_users %}
-                        <div class="user-card d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="fw-bold">{{ u.full_name }}</div>
-                                <div class="text-muted small">{{ u.username }}</div>
-                            </div>
-                            <form method="POST" action="{{ url_for('resend_reset', user_id=u.id) }}">
-                                <button type="submit" class="btn btn-outline-warning btn-sm"><i class="bi bi-arrow-repeat"></i> Resend Link</button>
-                            </form>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
-            {% endif %}
         </div>
     </div>
 </div>

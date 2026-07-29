@@ -16,16 +16,19 @@
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label class="form-label">Phone</label>
-                    <input type="tel" name="phone" class="form-control" placeholder="+1 234 567 890" required>
+                    <input type="tel" name="phone" class="form-control" placeholder="+1 234 567 890">
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label">Referral ID <small class="text-muted">(optional)</small></label>
-                    <input type="text" name="referral_id" class="form-control" placeholder="F2C91A84D7E5B601" value="{{ ref_code }}">
+                    <label class="form-label">Referral ID <small class="text-muted">(optional, from invite link)</small></label>
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+                        <input type="text" name="referral_id" class="form-control" placeholder="No referral code" value="{{ ref_code }}" readonly>
+                    </div>
                 </div>
             </div>
             <div class="mb-3">
                 <label class="form-label">Address</label>
-                <textarea name="address" class="form-control" rows="2" placeholder="Your address" required></textarea>
+                <textarea name="address" class="form-control" rows="2" placeholder="Your address"></textarea>
             </div>
             <div class="mb-3">
                 <label class="form-label">Username</label>

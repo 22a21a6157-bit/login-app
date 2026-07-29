@@ -179,32 +179,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Step 9a: Enforce phone/address as required + unique (login can now use
--- either field, per the app's login/reset-password logic).
--- IMPORTANT: this will fail if you have existing rows with NULL/blank or
--- duplicate phone/address values - fix those rows first, e.g.:
---   SELECT id, phone FROM users WHERE phone IS NULL OR phone = '';
---   SELECT phone, COUNT(*) FROM users GROUP BY phone HAVING COUNT(*) > 1;
--- then update/de-duplicate before re-running this step.
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM users WHERE phone IS NULL OR phone = '')
-       AND NOT EXISTS (SELECT phone FROM users GROUP BY phone HAVING COUNT(*) > 1) THEN
-        ALTER TABLE users ALTER COLUMN phone SET NOT NULL;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_users_phone') THEN
-            ALTER TABLE users ADD CONSTRAINT unique_users_phone UNIQUE (phone);
-        END IF;
-    END IF;
-
-    IF NOT EXISTS (SELECT 1 FROM users WHERE address IS NULL OR address = '')
-       AND NOT EXISTS (SELECT address FROM users GROUP BY address HAVING COUNT(*) > 1) THEN
-        ALTER TABLE users ALTER COLUMN address SET NOT NULL;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_users_address') THEN
-            ALTER TABLE users ADD CONSTRAINT unique_users_address UNIQUE (address);
-        END IF;
-    END IF;
-END $$;
-
 -- Step 9: Referral crediting on approval is handled exclusively by the
 -- Flask app (see approve_user() in app.py), which also writes an
 -- admin_logs entry. A DB trigger doing the same thing used to live here

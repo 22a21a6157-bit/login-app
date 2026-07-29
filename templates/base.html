@@ -11,6 +11,11 @@
     {% block extra_css %}{% endblock %}
 </head>
 <body>
+    <!-- Dynamically-rotating 4K nature wallpaper (glass background) -->
+    <div class="wallpaper-layer active" id="wallpaper-a"></div>
+    <div class="wallpaper-layer" id="wallpaper-b"></div>
+    <div class="wallpaper-overlay"></div>
+
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 9999;">

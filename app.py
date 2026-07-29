@@ -3,6 +3,9 @@ import os
 import secrets
 import re
 import logging
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from datetime import datetime
 from functools import wraps
 
@@ -81,6 +84,49 @@ if os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET")
         google_oauth_client = None
 else:
     logger.info("Google OAuth not configured (GOOGLE_CLIENT_ID/SECRET not set)")
+
+# ─── Email (SMTP) - used to deliver password reset links ──────
+SMTP_HOST = os.environ.get("SMTP_HOST")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
+SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", SMTP_USERNAME or "no-reply@example.com")
+SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "Referral Platform")
+SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() == "true"
+
+EMAIL_CONFIGURED = bool(SMTP_HOST and SMTP_USERNAME and SMTP_PASSWORD)
+if EMAIL_CONFIGURED:
+    logger.info(f"Email sending configured via {SMTP_HOST}:{SMTP_PORT}")
+else:
+    logger.warning("SMTP not configured (SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD missing) - "
+                    "password reset links will NOT be emailed, only shown to the admin as a fallback.")
+
+def send_email(to_email, subject, html_body, text_body=None):
+    """Send an email via SMTP. Returns True on success, False on failure (never raises)."""
+    if not EMAIL_CONFIGURED:
+        logger.warning(f"send_email skipped (SMTP not configured) - would have sent '{subject}' to {to_email}")
+        return False
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
+        msg["To"] = to_email
+
+        if text_body:
+            msg.attach(MIMEText(text_body, "plain"))
+        msg.attach(MIMEText(html_body, "html"))
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            if SMTP_USE_TLS:
+                server.starttls()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM_EMAIL, [to_email], msg.as_string())
+
+        logger.info(f"Email sent: '{subject}' -> {to_email}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {e}")
+        return False
 
 # ─── Helpers ─────────────────────────────────────────────────
 def generate_public_id():
@@ -240,10 +286,6 @@ def register():
             errors.append("Valid email is required.")
         if not username or len(username) < 3:
             errors.append("Username must be at least 3 characters.")
-        if not phone or not re.match(r"^\+?[0-9\s\-]{7,20}$", phone):
-            errors.append("A valid phone number is required.")
-        if not address or len(address) < 5:
-            errors.append("Address is required (min 5 chars).")
         if not password or len(password) < 6:
             errors.append("Password must be at least 6 characters.")
         if password != confirm_password:
@@ -257,20 +299,9 @@ def register():
         conn = get_db()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT email, username, phone, address FROM users
-                    WHERE email = %s OR username = %s OR phone = %s OR address = %s
-                """, (email, username, phone, address))
-                existing = cur.fetchone()
-                if existing:
-                    if existing["email"] == email:
-                        flash("Email already exists.", "danger")
-                    elif existing["username"] == username:
-                        flash("Username already exists.", "danger")
-                    elif existing["phone"] == phone:
-                        flash("Phone number already exists.", "danger")
-                    else:
-                        flash("Address already exists.", "danger")
+                cur.execute("SELECT id FROM users WHERE email = %s OR username = %s", (email, username))
+                if cur.fetchone():
+                    flash("Email or username already exists.", "danger")
                     return render_template("register.html", ref_code=ref_code)
 
                 referrer_id = None
@@ -374,10 +405,6 @@ def complete_google_profile():
             errors.append("Full name is required.")
         if not username or len(username) < 3:
             errors.append("Username must be at least 3 characters.")
-        if not phone or not re.match(r"^\+?[0-9\s\-]{7,20}$", phone):
-            errors.append("A valid phone number is required.")
-        if not address or len(address) < 5:
-            errors.append("Address is required (min 5 chars).")
         if not password or len(password) < 6:
             errors.append("Password must be at least 6 characters.")
         if password != confirm_password:
@@ -394,20 +421,10 @@ def complete_google_profile():
         conn = get_db()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT email, username, phone, address FROM users
-                    WHERE email = %s OR username = %s OR phone = %s OR address = %s
-                """, (session["google_email"], username, phone, address))
-                existing = cur.fetchone()
-                if existing:
-                    if existing["email"] == session["google_email"]:
-                        flash("Email already exists.", "danger")
-                    elif existing["username"] == username:
-                        flash("Username already exists.", "danger")
-                    elif existing["phone"] == phone:
-                        flash("Phone number already exists.", "danger")
-                    else:
-                        flash("Address already exists.", "danger")
+                cur.execute("SELECT id FROM users WHERE email = %s OR username = %s",
+                          (session["google_email"], username))
+                if cur.fetchone():
+                    flash("Email or username already exists.", "danger")
                     return render_template("complete_google_profile.html",
                                            email=session.get("google_email"),
                                            name=session.get("google_name", ""),
@@ -499,18 +516,8 @@ def login():
                     if col in columns:
                         select_cols.append(col)
 
-                # Allow login with username, email, phone, or address
-                conditions = ["username = %s", "email = %s"]
-                params = [username, username]
-                if "phone" in columns:
-                    conditions.append("phone = %s")
-                    params.append(username)
-                if "address" in columns:
-                    conditions.append("address = %s")
-                    params.append(username)
-
-                query = f"SELECT {', '.join(select_cols)} FROM users WHERE {' OR '.join(conditions)}"
-                cur.execute(query, tuple(params))
+                query = f"SELECT {', '.join(select_cols)} FROM users WHERE username = %s OR email = %s"
+                cur.execute(query, (username, username))
                 user = cur.fetchone()
 
                 if not user:
@@ -634,8 +641,8 @@ def forgot_password():
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT id, public_user_id, full_name, email, status
-                    FROM users WHERE username = %s OR email = %s OR phone = %s OR address = %s
-                """, (identifier, identifier, identifier, identifier))
+                    FROM users WHERE username = %s OR email = %s
+                """, (identifier, identifier))
                 user = cur.fetchone()
 
                 if not user:
@@ -683,6 +690,9 @@ def forgot_password():
 
 @app.route("/reset-password/<token>", methods=["GET", "POST"])
 def reset_password(token):
+    if "user_id" in session:
+        return redirect(url_for("dashboard"))
+
     conn = get_db()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -696,14 +706,6 @@ def reset_password(token):
             except (BadSignature, KeyError, ValueError, TypeError):
                 flash("Invalid reset link.", "danger")
                 return redirect(url_for("login"))
-
-            # If a session already exists (e.g. the admin who approved this
-            # request is still logged in, or a stale session in the same
-            # browser) it must not hijack this page - the reset form should
-            # always be shown to whoever holds the valid token. Clear any
-            # session that doesn't belong to the token's own user.
-            if session.get("user_id") != user_id:
-                session.clear()
 
             cur.execute("""
                 SELECT id, public_user_id, full_name, password_reset_status
@@ -849,25 +851,11 @@ def admin_dashboard():
             """)
             reset_requests = cur.fetchall()
 
-            if "password_reset_status" in user_cols:
-                cur.execute("""
-                    SELECT id, public_user_id, full_name, email, username
-                    FROM users WHERE password_reset_status = 'approved'
-                    ORDER BY updated_at DESC NULLS LAST
-                """)
-                awaiting_reset_users = cur.fetchall()
-            else:
-                awaiting_reset_users = []
-
-            reset_link_data = session.pop("reset_link_data", None)
-
             return render_template("admin.html",
                                    stats=stats,
                                    pending_users=pending_users,
                                    approved_users=approved_users,
-                                   reset_requests=reset_requests,
-                                   awaiting_reset_users=awaiting_reset_users,
-                                   reset_link_data=reset_link_data)
+                                   reset_requests=reset_requests)
     except Exception as e:
         logger.error(f"Admin dashboard error: {e}")
         flash("Error loading admin dashboard.", "danger")
@@ -993,49 +981,38 @@ def approve_reset(request_id):
 
             conn.commit()
 
-            session["reset_link_data"] = {"link": reset_link, "name": req["full_name"]}
-            flash(f"Reset approved for {req['full_name']}.", "success")
+            html_body = f"""
+            <div style="font-family: -apple-system, Arial, sans-serif; max-width: 480px; margin: 0 auto;">
+                <h2 style="color:#4f46e5;">Password Reset Approved</h2>
+                <p>Hi {req['full_name']},</p>
+                <p>Your password reset request has been approved. Click the button below to set a new password. This link expires in 1 hour and can only be used once.</p>
+                <p style="text-align:center; margin: 24px 0;">
+                    <a href="{reset_link}" style="background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;">Reset Your Password</a>
+                </p>
+                <p style="font-size: 13px; color:#666;">If the button doesn't work, copy this link into your browser:<br>{reset_link}</p>
+                <p style="font-size: 13px; color:#666;">If you didn't request this, you can safely ignore this email.</p>
+            </div>
+            """
+            text_body = (
+                f"Hi {req['full_name']},\n\n"
+                f"Your password reset request has been approved. Use this link to set a new password "
+                f"(expires in 1 hour, single use):\n{reset_link}\n\n"
+                f"If you didn't request this, you can ignore this email."
+            )
+            emailed = send_email(req["email"], "Your Password Reset Link", html_body, text_body)
+
+            if emailed:
+                flash(f"Reset approved - a reset link has been emailed to {req['email']}.", "success")
+            else:
+                # Fallback so the link is never simply lost if SMTP isn't configured or the send fails
+                flash(f"Reset approved for {req['full_name']}, but the email could NOT be sent "
+                      f"(SMTP not configured or delivery failed). Share this link with them manually:", "warning")
+                flash(f"Reset Link: {reset_link}", "info")
 
     except Exception as e:
         conn.rollback()
         logger.error(f"Approve reset error: {e}")
         flash("Error approving reset.", "danger")
-    finally:
-        release_db(conn)
-    return redirect(url_for("admin_dashboard"))
-
-@app.route("/admin/resend-reset/<int:user_id>", methods=["POST"])
-@admin_required
-def resend_reset(user_id):
-    conn = get_db()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT id, public_user_id, full_name, password_reset_status
-                FROM users WHERE id = %s
-            """, (user_id,))
-            user = cur.fetchone()
-
-            if not user or user.get("password_reset_status") != "approved":
-                flash("This user has no approved reset in progress.", "warning")
-                return redirect(url_for("admin_dashboard"))
-
-            token = reset_serializer.dumps({"user_id": user["id"], "public_id": user["public_user_id"]})
-            reset_link = request.host_url.rstrip("/") + url_for("reset_password", token=token)
-
-            cur.execute("""
-                INSERT INTO admin_logs (admin_id, action, target_user_id, details, created_at)
-                VALUES (%s, 'resend_reset', %s, %s, NOW())
-            """, (session["user_id"], user["id"], f"Resent reset link for {user['public_user_id']}"))
-            conn.commit()
-
-            session["reset_link_data"] = {"link": reset_link, "name": user["full_name"]}
-            flash(f"New reset link generated for {user['full_name']}.", "success")
-
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Resend reset error: {e}")
-        flash("Error generating reset link.", "danger")
     finally:
         release_db(conn)
     return redirect(url_for("admin_dashboard"))
