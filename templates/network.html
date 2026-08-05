@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+{% block title %}Referral Network{% endblock %}
+{% block extra_css %}
+<style>
+.network-hero { max-width: 640px; }
+.btn-icon-sm { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border-radius: 10px; }
+</style>
+{% endblock %}
+{% block content %}
+<nav class="navbar navbar-expand-lg admin-nav sticky-top">
+    <div class="container-fluid px-4">
+        <a class="navbar-brand fw-bold" href="{{ url_for('admin_dashboard') }}"><i class="bi bi-shield-shaded text-danger"></i> Admin Panel</a>
+        <div class="d-flex align-items-center gap-3">
+            <span class="text-muted small"><i class="bi bi-person"></i> {{ session.full_name }}</span>
+            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-sm btn-outline-light"><i class="bi bi-speedometer2"></i> Admin Dashboard</a>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-sm btn-outline-light">User View</a>
+            <a href="{{ url_for('logout') }}" class="btn btn-sm btn-danger"><i class="bi bi-box-arrow-right"></i></a>
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid px-4 py-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+        <div class="network-hero">
+            <h3 class="fw-bold mb-1"><i class="bi bi-hexagon-fill text-primary"></i> Referral Network</h3>
+            <p class="text-muted small mb-0">Every hexagon is a referrer; the circles around it are the people they referred directly, colored by status. Click a glowing circle to step into that person's own network.</p>
+        </div>
+        <div class="text-end">
+            <div class="hexnet-stat-pill mb-1"><span class="hexnet-live-dot" id="liveDot"></span><span id="liveStatus">Loading…</span></div>
+            <div><button class="btn btn-sm btn-outline-light" id="refreshBtn"><i class="bi bi-arrow-clockwise"></i> Refresh</button></div>
+        </div>
+    </div>
+
+    <div class="card bg-dark border-secondary mb-4">
+        <div class="card-body">
+            <div class="hexnet-toolbar mb-3">
+                <div class="hexnet-search-wrap" style="max-width: 340px; flex: 1 1 260px;">
+                    <input type="text" class="form-control" id="networkSearch" placeholder="Search by name or referral ID…" autocomplete="off">
+                    <div class="hexnet-search-results d-none" id="searchResults"></div>
+                </div>
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    <span class="hexnet-stat-pill"><strong id="statTotalUsers">–</strong>&nbsp;total participants</span>
+                    <span class="hexnet-stat-pill"><strong id="statTotalRoots">–</strong>&nbsp;independent trees</span>
+                </div>
+            </div>
+            <div class="d-flex flex-wrap align-items-center" style="row-gap:0.5rem;">
+                <div id="legend" class="d-flex flex-wrap"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="breadcrumbWrap" class="mb-3 d-none">
+        <div class="hexnet-breadcrumb" id="breadcrumb"></div>
+    </div>
+
+    <div id="networkArea">
+        <div class="text-center text-muted py-5">
+            <div class="spinner-border text-primary mb-3" role="status"></div>
+            <p>Loading the referral network…</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/network.js') }}"></script>
+<script>
+(function () {
+    const API = "{{ url_for('admin_network_api') }}";
+    const area = document.getElementById("networkArea");
+    const breadcrumbWrap = document.getElementById("breadcrumbWrap");
+    const breadcrumbEl = document.getElementById("breadcrumb");
+    const liveStatus = document.getElementById("liveStatus");
+    const liveDot = document.getElementById("liveDot");
+
+    document.getElementById("legend").innerHTML = HexNetwork.legendHTML();
+
+    let state = { mode: "overview", path: [{ id: null, name: "Overview" }] };
+    let lastFetchedAt = null;
+    let lastPayloadJSON = null;
+    let pollTimer = null;
+    let tickTimer = null;
+
+    function timeAgo() {
+        if (!lastFetchedAt) return "";
+        const secs = Math.max(0, Math.round((Date.now() - lastFetchedAt) / 1000));
+        if (secs < 5) return "updated just now";
+        if (secs < 60) return `updated ${secs}s ago`;
+        return `updated ${Math.round(secs / 60)}m ago`;
+    }
+
+    function setLive(text) { liveStatus.textContent = text; }
+
+    async function fetchJSON(url) {
+        const res = await fetch(url, { headers: { "X-Requested-With": "XMLHttpRequest" } });
+        if (!res.ok) throw new Error("network_error_" + res.status);
+        return res.json();
+    }
+
+    function renderBreadcrumb() {
+        if (state.path.length <= 1) { breadcrumbWrap.classList.add("d-none"); return; }
+        breadcrumbWrap.classList.remove("d-none");
+        breadcrumbEl.innerHTML = state.path.map((p, i) => {
+            const isLast = i === state.path.length - 1;
+            if (isLast) return `<span class="current">${HexNetwork.esc(p.name)}</span>`;
+            return `<button type="button" data-idx="${i}">${HexNetwork.esc(p.name)}</button><i class="bi bi-chevron-right" style="font-size:0.7rem;"></i>`;
+        }).join(" ");
+        breadcrumbEl.querySelectorAll("button[data-idx]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const idx = Number(btn.getAttribute("data-idx"));
+                const crumb = state.path[idx];
+                state.path = state.path.slice(0, idx + 1);
+                if (crumb.id === null) loadOverview(); else loadCenter(crumb.id, false);
+            });
+        });
+    }
+
+    function renderOverview(data) {
+        state.mode = "overview";
+        document.getElementById("statTotalUsers").textContent = data.totalUsers;
+        document.getElementById("statTotalRoots").textContent = data.totalRoots;
+        renderBreadcrumb();
+
+        if (!data.roots.length) {
+            area.innerHTML = `<div class="card bg-dark border-secondary"><div class="card-body">
+                <div class="hexnet-detail-empty py-5"><i class="bi bi-diagram-3 fs-1 d-block mb-2"></i>No referral activity yet. Once people start signing up with referral links, their networks will appear here.</div>
+            </div></div>`;
+            return;
+        }
+
+        const wrap = document.createElement("div");
+        wrap.className = "hexnet-overview-row";
+        data.roots.forEach(({ node, satellites }) => {
+            const card = document.createElement("div");
+            card.className = "hexnet-root-card";
+            card.innerHTML = (satellites.length ? HexNetwork.constellationSVG(node, satellites, { w: 250, h: 210, hexR: 34, spokeLen: 72, satR: 12 })
+                                                 : HexNetwork.emptySVG(node, { w: 250, h: 210, hexR: 34 })) +
+                `<div class="hexnet-root-caption">${HexNetwork.esc(node.name)}</div>
+                 <div class="hexnet-root-sub">${node.referrals} referral${node.referrals === 1 ? "" : "s"} &middot; ${HexNetwork.esc(node.level)}</div>`;
+            const map = HexNetwork.nodeMap(node, satellites);
+            HexNetwork.attachInteractivity(card, map, {
+                onSelect: (n) => {
+                    state.path = [{ id: null, name: "Overview" }, { id: n.id, name: n.name }];
+                    loadCenter(n.id, false);
+                },
+            });
+            wrap.appendChild(card);
+        });
+        area.innerHTML = "";
+        area.appendChild(wrap);
+    }
+
+    function detailPanelHTML(node, { showDrill } = {}) {
+        const statusColor = HexNetwork.STATUS_COLOR[node.status] || HexNetwork.STATUS_COLOR.approved;
+        return `
+            <h6>Selected</h6>
+            <div class="hexnet-detail-name">${HexNetwork.esc(node.name)}</div>
+            <div class="hexnet-detail-row"><span>Status</span><span><span class="hexnet-legend-dot" style="background:${statusColor}"></span> ${HexNetwork.STATUS_LABEL[node.status] || node.status}</span></div>
+            <div class="hexnet-detail-row"><span>Level</span><span>${HexNetwork.esc(node.level)}</span></div>
+            <div class="hexnet-detail-row"><span>Referrals</span><span>${node.referrals}</span></div>
+            <div class="hexnet-detail-row"><span>Earned</span><span>$${Number(node.earned).toFixed(2)}</span></div>
+            <div class="hexnet-detail-row"><span>Referral ID</span><span class="font-monospace small">${HexNetwork.esc(node.id)}</span></div>
+            ${node.joined ? `<div class="hexnet-detail-row"><span>Joined</span><span>${HexNetwork.esc(node.joined)}</span></div>` : ""}
+            ${showDrill && node.hasChildren ? `<button class="btn btn-glow btn-sm w-100 mt-3" id="drillBtn"><i class="bi bi-hexagon"></i> View Their Network</button>` : ""}
+        `;
+    }
+
+    function renderFocus(data) {
+        state.mode = "focus";
+        renderBreadcrumb();
+
+        const svgWrap = document.createElement("div");
+        svgWrap.className = "hexnet-focus-svg-wrap";
+        svgWrap.innerHTML = data.satellites.length
+            ? HexNetwork.constellationSVG(data.center, data.satellites, { w: 460, h: 380, hexR: 52, spokeLen: 140, satR: 18, showSatLabels: true })
+            : HexNetwork.emptySVG(data.center, { w: 460, h: 300, hexR: 52 });
+
+        const panel = document.createElement("div");
+        panel.className = "hexnet-detail-panel";
+        panel.innerHTML = detailPanelHTML(data.center, { showDrill: false });
+
+        const focusWrap = document.createElement("div");
+        focusWrap.className = "hexnet-focus-wrap";
+        focusWrap.appendChild(svgWrap);
+        focusWrap.appendChild(panel);
+
+        area.innerHTML = "";
+        area.appendChild(focusWrap);
+
+        const map = HexNetwork.nodeMap(data.center, data.satellites);
+        HexNetwork.attachInteractivity(focusWrap, map, {
+            onSelect: (n) => {
+                if (n.id === data.center.id) {
+                    panel.innerHTML = detailPanelHTML(n, { showDrill: false });
+                    return;
+                }
+                panel.innerHTML = detailPanelHTML(n, { showDrill: true });
+                const drillBtn = document.getElementById("drillBtn");
+                if (drillBtn) {
+                    drillBtn.addEventListener("click", () => {
+                        state.path.push({ id: n.id, name: n.name });
+                        loadCenter(n.id, false);
+                    });
+                }
+            },
+        });
+    }
+
+    async function loadOverview() {
+        state.path = [{ id: null, name: "Overview" }];
+        try {
+            const data = await fetchJSON(API);
+            const json = JSON.stringify(data);
+            if (json !== lastPayloadJSON) { renderOverview(data); lastPayloadJSON = json; }
+            lastFetchedAt = Date.now();
+            setLive(timeAgo());
+        } catch (e) {
+            setLive("Live updates paused (connection issue)");
+        }
+    }
+
+    async function loadCenter(id, silent) {
+        try {
+            const data = await fetchJSON(API + "?center=" + encodeURIComponent(id));
+            if (!silent) { lastPayloadJSON = null; }
+            const json = JSON.stringify(data);
+            if (json !== lastPayloadJSON) { renderFocus(data); lastPayloadJSON = json; }
+            lastFetchedAt = Date.now();
+            setLive(timeAgo());
+        } catch (e) {
+            setLive("Live updates paused (connection issue)");
+        }
+    }
+
+    function refetchCurrent(silent) {
+        const tail = state.path[state.path.length - 1];
+        if (tail.id === null) loadOverview(); else loadCenter(tail.id, silent);
+    }
+
+    document.getElementById("refreshBtn").addEventListener("click", () => refetchCurrent(false));
+
+    // Live polling: refetch the current view periodically; only re-render if data actually changed
+    pollTimer = setInterval(() => refetchCurrent(true), 20000);
+    tickTimer = setInterval(() => { if (lastFetchedAt) setLive(timeAgo()); }, 1000);
+
+    // Search
+    const searchInput = document.getElementById("networkSearch");
+    const searchResults = document.getElementById("searchResults");
+    let searchDebounce = null;
+    searchInput.addEventListener("input", () => {
+        clearTimeout(searchDebounce);
+        const q = searchInput.value.trim();
+        if (!q) { searchResults.classList.add("d-none"); return; }
+        searchDebounce = setTimeout(async () => {
+            try {
+                const data = await fetchJSON(API + "?q=" + encodeURIComponent(q));
+                if (!data.results.length) {
+                    searchResults.innerHTML = `<div class="hexnet-search-empty">No matches for "${HexNetwork.esc(q)}"</div>`;
+                } else {
+                    searchResults.innerHTML = data.results.map((n) => `
+                        <div class="hexnet-search-result" data-id="${HexNetwork.esc(n.id)}">
+                            <span>${HexNetwork.esc(n.name)}</span>
+                            <span class="text-muted small">${HexNetwork.esc(n.status)}</span>
+                        </div>`).join("");
+                    searchResults.querySelectorAll(".hexnet-search-result").forEach((el) => {
+                        el.addEventListener("click", () => {
+                            const id = el.getAttribute("data-id");
+                            const name = el.querySelector("span").textContent;
+                            state.path = [{ id: null, name: "Overview" }, { id, name }];
+                            loadCenter(id, false);
+                            searchResults.classList.add("d-none");
+                            searchInput.value = "";
+                        });
+                    });
+                }
+                searchResults.classList.remove("d-none");
+            } catch (e) { /* silent */ }
+        }, 250);
+    });
+    document.addEventListener("click", (evt) => {
+        if (!evt.target.closest(".hexnet-search-wrap")) searchResults.classList.add("d-none");
+    });
+
+    loadOverview();
+})();
+</script>
+{% endblock %}

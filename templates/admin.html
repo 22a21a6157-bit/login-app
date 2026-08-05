@@ -2,7 +2,6 @@
 {% block title %}Admin Dashboard{% endblock %}
 {% block extra_css %}
 <style>
-.admin-nav { background: rgba(15,23,42,0.98); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(255,255,255,0.05); }
 .stat-pill { background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 1.25rem; }
 .user-card { background: rgba(30,41,59,0.6); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 1rem; transition: all 0.2s; }
 .user-card:hover { border-color: rgba(99,102,241,0.3); transform: translateY(-2px); }
@@ -18,6 +17,7 @@
         <a class="navbar-brand fw-bold" href="#"><i class="bi bi-shield-shaded text-danger"></i> Admin Panel</a>
         <div class="d-flex align-items-center gap-3">
             <span class="text-muted small"><i class="bi bi-person"></i> {{ session.full_name }}</span>
+            <a href="{{ url_for('admin_network') }}" class="btn btn-sm btn-outline-light"><i class="bi bi-hexagon"></i> Network</a>
             <a href="{{ url_for('dashboard') }}" class="btn btn-sm btn-outline-light">User View</a>
             <a href="{{ url_for('logout') }}" class="btn btn-sm btn-danger"><i class="bi bi-box-arrow-right"></i></a>
         </div>
@@ -183,4 +183,97 @@
         </div>
     </div>
 </div>
+
+{% if compose_email %}
+<div class="modal fade" id="composeEmailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-envelope-paper text-primary"></i> Reset Email Ready to Send</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">The reset link was generated but <strong>not sent automatically</strong>. Review it below, then send it however you'd like.</p>
+
+        <div class="mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <label class="form-label small text-muted mb-0" for="composeTo">To</label>
+            <button class="btn btn-sm btn-outline-light py-0 px-2" type="button" data-copy="#composeTo"><i class="bi bi-clipboard"></i> Copy</button>
+          </div>
+          <input type="text" class="form-control compose-field" id="composeTo" value="{{ compose_email.to }}" readonly>
+        </div>
+
+        <div class="mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <label class="form-label small text-muted mb-0" for="composeSubject">Subject</label>
+            <button class="btn btn-sm btn-outline-light py-0 px-2" type="button" data-copy="#composeSubject"><i class="bi bi-clipboard"></i> Copy</button>
+          </div>
+          <input type="text" class="form-control compose-field" id="composeSubject" value="{{ compose_email.subject }}" readonly>
+        </div>
+
+        <div class="mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <label class="form-label small text-muted mb-0" for="composeBody">Body</label>
+            <button class="btn btn-sm btn-outline-light py-0 px-2" type="button" data-copy="#composeBody"><i class="bi bi-clipboard"></i> Copy</button>
+          </div>
+          <textarea class="form-control compose-field" id="composeBody" rows="6" readonly>{{ compose_email.body }}</textarea>
+        </div>
+
+        <div>
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <label class="form-label small text-muted mb-0" for="composeLink">Reset link only</label>
+            <button class="btn btn-sm btn-outline-light py-0 px-2" type="button" data-copy="#composeLink"><i class="bi bi-clipboard"></i> Copy</button>
+          </div>
+          <input type="text" class="form-control compose-field" id="composeLink" value="{{ compose_email.reset_link }}" readonly>
+        </div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Close</button>
+        <a id="composeMailto" href="#" class="btn btn-glow"><i class="bi bi-envelope"></i> Open in Email App</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if compose_email %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var modalEl = document.getElementById('composeEmailModal');
+    if (!modalEl) return;
+    new bootstrap.Modal(modalEl).show();
+
+    var to = {{ compose_email.to|tojson }};
+    var subject = {{ compose_email.subject|tojson }};
+    var body = {{ compose_email.body|tojson }};
+    var mailtoLink = document.getElementById('composeMailto');
+    if (mailtoLink) {
+        mailtoLink.href = 'mailto:' + encodeURIComponent(to) +
+            '?subject=' + encodeURIComponent(subject) +
+            '&body=' + encodeURIComponent(body);
+    }
+
+    document.querySelectorAll('[data-copy]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var target = document.querySelector(btn.getAttribute('data-copy'));
+            if (!target) return;
+            var finish = function (label) {
+                var original = btn.innerHTML;
+                btn.innerHTML = '<i class="bi bi-check-lg"></i> ' + label;
+                setTimeout(function () { btn.innerHTML = original; }, 1500);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(target.value).then(function () { finish('Copied'); })
+                    .catch(function () { target.select(); finish('Selected'); });
+            } else {
+                target.select();
+                finish('Selected');
+            }
+        });
+    });
+});
+</script>
+{% endif %}
 {% endblock %}

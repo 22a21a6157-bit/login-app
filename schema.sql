@@ -151,7 +151,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
 
 -- Update existing users with public_user_id
-UPDATE users SET public_user_id = UPPER(REPLACE(gen_random_uuid()::TEXT, '-', '')) WHERE public_user_id IS NULL;
+UPDATE users SET public_user_id = UPPER(SUBSTRING(REPLACE(gen_random_uuid()::TEXT, '-', '') FROM 1 FOR 16)) WHERE public_user_id IS NULL;
 
 -- Make it unique and not null
 ALTER TABLE users ALTER COLUMN public_user_id SET NOT NULL;

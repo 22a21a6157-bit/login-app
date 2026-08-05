@@ -6,7 +6,7 @@ import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
@@ -50,16 +50,64 @@ if not DATABASE_URL:
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+# Pool sizing: this pool is created once PER GUNICORN WORKER PROCESS, so the
+# real number of connections opened against the database is roughly
+# (DB_POOL_MAXCONN * number_of_gunicorn_workers). Neon's free/dev tiers cap
+# concurrent connections fairly low, so a maxconn of 20 per worker used to
+# make it easy to blow past that limit (seen as intermittent
+# "FATAL: too many connections" errors) once more than a couple of workers
+# were running. Defaults are now conservative and overridable via env vars.
+# If you're on Neon, prefer the pooled connection string (hostname contains
+# "-pooler") for DATABASE_URL - it multiplexes many app connections over far
+# fewer real Postgres connections and tolerates this kind of pool much better.
+DB_POOL_MINCONN = int(os.environ.get("DB_POOL_MINCONN", "1"))
+DB_POOL_MAXCONN = int(os.environ.get("DB_POOL_MAXCONN", "5"))
+
 try:
     db_pool = ThreadedConnectionPool(
-        minconn=1, maxconn=20, dsn=DATABASE_URL, sslmode="require"
+        minconn=DB_POOL_MINCONN,
+        maxconn=DB_POOL_MAXCONN,
+        dsn=DATABASE_URL,
+        sslmode="require",
+        connect_timeout=10,       # fail fast instead of hanging a worker if Neon is unreachable/cold-starting
+        keepalives=1,             # detect half-dead TCP sockets (e.g. after Neon auto-suspends/idles out
+        keepalives_idle=30,       # a connection) instead of handing out one that will error on first use
+        keepalives_interval=10,
+        keepalives_count=3,
     )
-    logger.info("Database pool created successfully")
+    logger.info(f"Database pool created successfully (min={DB_POOL_MINCONN}, max={DB_POOL_MAXCONN})")
 except Exception as e:
     logger.error(f"Database pool creation failed: {e}")
     raise
 
 def get_db():
+    """Check out a connection from the pool, verifying it's actually alive first.
+
+    Neon (and most managed/serverless Postgres) can silently close idle
+    connections - e.g. when the underlying compute auto-suspends - without
+    the pool knowing. Without this check, a stale connection gets handed to
+    a route, and the first query in that request fails with something like
+    "OperationalError: server closed the connection unexpectedly", turning
+    into a confusing 500 that had nothing to do with the route's own logic.
+    A cheap SELECT 1 here catches that and transparently swaps in a fresh
+    connection instead.
+    """
+    last_err = None
+    for _ in range(2):
+        conn = db_pool.getconn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            return conn
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Discarding a dead pooled DB connection: {e}")
+            try:
+                db_pool.putconn(conn, close=True)
+            except Exception:
+                pass
+    # Both attempts failed - let the caller's own try/except handle it
+    logger.error(f"get_db: unable to obtain a healthy connection: {last_err}")
     return db_pool.getconn()
 
 def release_db(conn):
@@ -169,7 +217,7 @@ def admin_required(f):
 # ─── Context Processor ──────────────────────────────────────
 @app.context_processor
 def inject_globals():
-    return {"now": datetime.utcnow(), "format_currency": format_currency}
+    return {"now": datetime.now(timezone.utc), "format_currency": format_currency}
 
 # ─── Routes ──────────────────────────────────────────────────
 
@@ -612,8 +660,7 @@ def dashboard():
             return render_template("dashboard.html",
                                    user=user,
                                    referrals=referrals,
-                                   ref_link=ref_link,
-                                   level=get_level(user.get("referral_count", 0)))
+                                   ref_link=ref_link)
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
         flash("Error loading dashboard.", "danger")
@@ -855,7 +902,8 @@ def admin_dashboard():
                                    stats=stats,
                                    pending_users=pending_users,
                                    approved_users=approved_users,
-                                   reset_requests=reset_requests)
+                                   reset_requests=reset_requests,
+                                   compose_email=session.pop("pending_compose_email", None))
     except Exception as e:
         logger.error(f"Admin dashboard error: {e}")
         flash("Error loading admin dashboard.", "danger")
@@ -981,33 +1029,31 @@ def approve_reset(request_id):
 
             conn.commit()
 
-            html_body = f"""
-            <div style="font-family: -apple-system, Arial, sans-serif; max-width: 480px; margin: 0 auto;">
-                <h2 style="color:#4f46e5;">Password Reset Approved</h2>
-                <p>Hi {req['full_name']},</p>
-                <p>Your password reset request has been approved. Click the button below to set a new password. This link expires in 1 hour and can only be used once.</p>
-                <p style="text-align:center; margin: 24px 0;">
-                    <a href="{reset_link}" style="background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;">Reset Your Password</a>
-                </p>
-                <p style="font-size: 13px; color:#666;">If the button doesn't work, copy this link into your browser:<br>{reset_link}</p>
-                <p style="font-size: 13px; color:#666;">If you didn't request this, you can safely ignore this email.</p>
-            </div>
-            """
+            # ── Compose, don't send ──────────────────────────────────────
+            # This used to email the reset link straight to the user via
+            # SMTP. That meant the admin never saw or reviewed what was
+            # about to be sent, and it silently depended on SMTP_* being
+            # configured correctly. Instead, we now prefill the recipient,
+            # subject, and body and hand it back to the admin - they review
+            # it in the compose modal on the admin dashboard and actually
+            # hit "send" themselves (via their own email app, or by copying
+            # the text into whatever channel they prefer). Nothing is sent
+            # by the server in this flow.
+            subject = "Your Password Reset Link"
             text_body = (
                 f"Hi {req['full_name']},\n\n"
                 f"Your password reset request has been approved. Use this link to set a new password "
                 f"(expires in 1 hour, single use):\n{reset_link}\n\n"
-                f"If you didn't request this, you can ignore this email."
+                f"If you didn't request this, you can ignore this message."
             )
-            emailed = send_email(req["email"], "Your Password Reset Link", html_body, text_body)
-
-            if emailed:
-                flash(f"Reset approved - a reset link has been emailed to {req['email']}.", "success")
-            else:
-                # Fallback so the link is never simply lost if SMTP isn't configured or the send fails
-                flash(f"Reset approved for {req['full_name']}, but the email could NOT be sent "
-                      f"(SMTP not configured or delivery failed). Share this link with them manually:", "warning")
-                flash(f"Reset Link: {reset_link}", "info")
+            session["pending_compose_email"] = {
+                "to": req["email"],
+                "subject": subject,
+                "body": text_body,
+                "recipient_name": req["full_name"],
+                "reset_link": reset_link,
+            }
+            flash(f"Reset approved for {req['full_name']}. Review the email below and send it.", "success")
 
     except Exception as e:
         conn.rollback()
@@ -1037,6 +1083,155 @@ def reject_reset(request_id):
     finally:
         release_db(conn)
     return redirect(url_for("admin_dashboard"))
+
+# ═════════════════════════════════════════════════════════════
+# REFERRAL NETWORK (hexagonal, live, interactive)
+# ═════════════════════════════════════════════════════════════
+def _node(row, has_children=False):
+    """Serialize a users row into the compact shape the network UI expects."""
+    return {
+        "id": row["public_user_id"],
+        "name": row["full_name"],
+        "status": row.get("status") or "approved",
+        "level": row.get("user_level") or "Starter",
+        "referrals": row.get("referral_count") or 0,
+        "earned": float(row.get("amount_earned") or 0),
+        "joined": row["created_at"].strftime("%d %b %Y") if row.get("created_at") else None,
+        "hasChildren": bool(has_children),
+    }
+
+def _children_map(cur, public_ids):
+    """One query to fetch the direct referrals of every id in public_ids,
+    grouped by referrer. Avoids N+1 queries when rendering several hexes
+    (each with their own satellites) at once."""
+    if not public_ids:
+        return {}
+    cur.execute("""
+        SELECT id, public_user_id, full_name, status, user_level, referral_count,
+               amount_earned, created_at, referral_id,
+               EXISTS(SELECT 1 FROM users c WHERE c.referral_id = users.public_user_id) AS has_children
+        FROM users
+        WHERE referral_id = ANY(%s) AND is_admin = FALSE
+        ORDER BY created_at ASC
+    """, (public_ids,))
+    grouped = {pid: [] for pid in public_ids}
+    for row in cur.fetchall():
+        grouped[row["referral_id"]].append(_node(row, row["has_children"]))
+    return grouped
+
+@app.route("/admin/network")
+@admin_required
+def admin_network():
+    return render_template("network.html")
+
+@app.route("/admin/api/network")
+@admin_required
+def admin_network_api():
+    q = request.args.get("q", "").strip()
+    center = request.args.get("center", "").strip().upper()
+    conn = get_db()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if q:
+                id_clause = "OR public_user_id ILIKE %s" if len(q) >= 4 else ""
+                params = [f"%{q}%", f"%{q}%"] + ([f"%{q}%"] if len(q) >= 4 else [])
+                cur.execute(f"""
+                    SELECT public_user_id, full_name, status, user_level, referral_count,
+                           amount_earned, created_at,
+                           EXISTS(SELECT 1 FROM users c WHERE c.referral_id = users.public_user_id) AS has_children
+                    FROM users
+                    WHERE is_admin = FALSE AND (full_name ILIKE %s OR username ILIKE %s {id_clause})
+                    ORDER BY full_name ASC LIMIT 15
+                """, params)
+                results = [_node(r, r["has_children"]) for r in cur.fetchall()]
+                return jsonify({"mode": "search", "results": results})
+
+            if center:
+                cur.execute("""
+                    SELECT id, public_user_id, full_name, status, user_level, referral_count,
+                           amount_earned, created_at, referral_id,
+                           EXISTS(SELECT 1 FROM users c WHERE c.referral_id = users.public_user_id) AS has_children
+                    FROM users WHERE public_user_id = %s AND is_admin = FALSE
+                """, (center,))
+                row = cur.fetchone()
+                if not row:
+                    return jsonify({"error": "not_found"}), 404
+
+                referrer = None
+                if row["referral_id"]:
+                    cur.execute("SELECT public_user_id, full_name FROM users WHERE public_user_id = %s",
+                                (row["referral_id"],))
+                    up = cur.fetchone()
+                    if up:
+                        referrer = {"id": up["public_user_id"], "name": up["full_name"]}
+
+                satellites = _children_map(cur, [row["public_user_id"]]).get(row["public_user_id"], [])
+                return jsonify({
+                    "mode": "center",
+                    "center": _node(row, row["has_children"]),
+                    "referrer": referrer,
+                    "satellites": satellites,
+                })
+
+            # Default: overview of every independent referral tree (root = no upline)
+            cur.execute("""
+                SELECT id, public_user_id, full_name, status, user_level, referral_count,
+                       amount_earned, created_at,
+                       EXISTS(SELECT 1 FROM users c WHERE c.referral_id = users.public_user_id) AS has_children
+                FROM users
+                WHERE referral_id IS NULL AND is_admin = FALSE
+                ORDER BY referral_count DESC, created_at ASC
+                LIMIT 40
+            """)
+            roots = cur.fetchall()
+            kids = _children_map(cur, [r["public_user_id"] for r in roots])
+            overview = [
+                {"node": _node(r, r["has_children"]), "satellites": kids.get(r["public_user_id"], [])}
+                for r in roots
+            ]
+
+            cur.execute("SELECT COUNT(*) AS c FROM users WHERE is_admin = FALSE")
+            total_users = cur.fetchone()["c"]
+
+            return jsonify({
+                "mode": "overview",
+                "roots": overview,
+                "totalRoots": len(roots),
+                "totalUsers": total_users,
+                "generatedAt": datetime.now(timezone.utc).isoformat(),
+            })
+    except Exception as e:
+        logger.error(f"Network API error: {e}")
+        return jsonify({"error": "server_error"}), 500
+    finally:
+        release_db(conn)
+
+@app.route("/api/my-network")
+def my_network_api():
+    """Compact version of the network API scoped to the logged-in user's own
+    node, for the small live widget on their dashboard (no admin required -
+    everyone can see their own referrals, same data already on their dashboard
+    table, just visualized)."""
+    if "user_id" not in session:
+        return jsonify({"error": "not_authenticated"}), 401
+    conn = get_db()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, public_user_id, full_name, status, user_level, referral_count,
+                       amount_earned, created_at
+                FROM users WHERE id = %s
+            """, (session["user_id"],))
+            row = cur.fetchone()
+            if not row:
+                return jsonify({"error": "not_found"}), 404
+            satellites = _children_map(cur, [row["public_user_id"]]).get(row["public_user_id"], [])
+            return jsonify({"center": _node(row, bool(satellites)), "satellites": satellites})
+    except Exception as e:
+        logger.error(f"My-network API error: {e}")
+        return jsonify({"error": "server_error"}), 500
+    finally:
+        release_db(conn)
 
 # ═════════════════════════════════════════════════════════════
 # API

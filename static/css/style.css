@@ -257,3 +257,148 @@ body {
     .wallpaper-layer { transition: none; }
 }
 
+/* ─── Admin nav bar (shared by admin dashboard + network explorer) ── */
+.admin-nav { background: rgba(15,23,42,0.98); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(255,255,255,0.05); }
+
+/* ═══════════════════════════════════════════════════════════
+   Hex Network — referral constellation visualization
+   ═══════════════════════════════════════════════════════════ */
+.hexnet-svg { width: 100%; height: auto; display: block; overflow: visible; }
+
+.hexnet-node { cursor: pointer; outline: none; }
+.hexnet-node:focus-visible .hexnet-hexagon,
+.hexnet-node:focus-visible .hexnet-dot { stroke: #fff; stroke-width: 3; }
+
+.hexnet-hexagon {
+    fill: rgba(99, 102, 241, 0.18);
+    stroke: var(--lvl, var(--accent));
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 10px var(--lvl, var(--accent-glow)));
+    transition: fill 0.25s ease, transform 0.2s ease;
+    transform-origin: center;
+    transform-box: fill-box;
+}
+.hexnet-node:hover .hexnet-hexagon { fill: rgba(99, 102, 241, 0.34); transform: scale(1.06); }
+
+.hexnet-hex-label {
+    fill: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+}
+
+.hexnet-spoke { stroke: rgba(255, 255, 255, 0.22); stroke-width: 1.5; stroke-dasharray: 3 4; }
+
+.hexnet-dot {
+    stroke: rgba(255, 255, 255, 0.55);
+    stroke-width: 1.5;
+    filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.45));
+    transition: filter 0.2s ease, r 0.15s ease;
+}
+.hexnet-node:hover .hexnet-dot { filter: drop-shadow(0 0 7px currentColor) drop-shadow(0 0 3px rgba(0,0,0,0.5)); }
+
+.hexnet-dot-ring {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.4);
+    stroke-width: 1.4;
+    stroke-dasharray: 2 3;
+    transform-origin: center;
+    transform-box: fill-box;
+    animation: hexnet-spin 14s linear infinite;
+}
+@keyframes hexnet-spin { to { transform: rotate(360deg); } }
+
+.hexnet-sat-label { fill: var(--text-muted); font-size: 10.5px; font-weight: 600; pointer-events: none; }
+.hexnet-empty-label { fill: var(--text-muted); font-size: 12px; text-anchor: middle; font-style: italic; }
+
+/* Tooltip (single floating element, reused across every constellation) */
+.hexnet-tooltip {
+    position: fixed; top: 0; left: 0; z-index: 3000;
+    min-width: 190px; max-width: 240px;
+    padding: 0.65rem 0.85rem;
+    background: linear-gradient(135deg, rgba(30,36,54,0.97), rgba(12,16,26,0.97));
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 16px 34px -12px rgba(0,0,0,0.6);
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+}
+.hexnet-tooltip.visible { opacity: 1; }
+.hexnet-tooltip-name { font-weight: 700; margin-bottom: 0.3rem; }
+.hexnet-tooltip-row { display: flex; align-items: center; gap: 0.35rem; color: var(--text-muted); margin-top: 0.15rem; }
+.hexnet-tooltip-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.hexnet-tooltip-muted { font-size: 0.72rem; opacity: 0.85; }
+.hexnet-tooltip-hint { color: #a5b4fc; font-size: 0.72rem; margin-top: 0.4rem; }
+
+/* Legend */
+.hexnet-legend-group { display: inline-flex; align-items: center; gap: 0.6rem; margin-right: 1.5rem; flex-wrap: wrap; }
+.hexnet-legend-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-right: 0.15rem; }
+.hexnet-legend-item { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; color: var(--text-muted); }
+.hexnet-legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.hexnet-legend-hex { width: 11px; height: 11px; display: inline-block; background: var(--lvl); clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%); }
+
+/* Toolbar / stat pills / live indicator */
+.hexnet-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; justify-content: space-between; }
+.hexnet-stat-pill { background: var(--glass-fill); border: 1px solid var(--border); border-radius: 999px; padding: 0.35rem 0.9rem; font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; }
+.hexnet-stat-pill strong { color: var(--text-primary); }
+.hexnet-live-dot { width: 8px; height: 8px; border-radius: 50%; background: #10b981; display: inline-block; margin-right: 0.35rem; animation: hexnet-live-pulse 2s infinite; }
+@keyframes hexnet-live-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.55); }
+    70% { box-shadow: 0 0 0 8px rgba(16,185,129,0); }
+    100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+}
+
+/* Overview: horizontal row of root constellations */
+.hexnet-overview-row { display: flex; gap: 1.25rem; overflow-x: auto; padding: 0.5rem 0.25rem 1.25rem; scroll-snap-type: x proximity; }
+.hexnet-root-card { flex: 0 0 auto; width: 250px; scroll-snap-align: start; background: var(--glass-fill); border: 1px solid var(--border); border-radius: 20px; padding: 0.75rem 0.5rem 1rem; text-align: center; transition: border-color 0.2s, transform 0.2s; }
+.hexnet-root-card:hover { border-color: rgba(99,102,241,0.5); transform: translateY(-3px); }
+.hexnet-root-caption { font-weight: 600; font-size: 0.9rem; margin-top: 0.25rem; }
+.hexnet-root-sub { font-size: 0.75rem; color: var(--text-muted); }
+
+/* Focus / drill-down view */
+.hexnet-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--text-muted); }
+.hexnet-breadcrumb button { background: none; border: none; color: #a5b4fc; padding: 0.15rem 0.4rem; border-radius: 8px; font-size: 0.85rem; }
+.hexnet-breadcrumb button:hover { background: rgba(255,255,255,0.08); }
+.hexnet-breadcrumb .current { color: var(--text-primary); font-weight: 600; padding: 0.15rem 0.4rem; }
+
+.hexnet-focus-wrap { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: flex-start; }
+.hexnet-focus-svg-wrap { flex: 1 1 380px; min-width: 280px; }
+.hexnet-detail-panel { flex: 0 0 260px; background: var(--glass-fill); border: 1px solid var(--border); border-radius: 18px; padding: 1.1rem; }
+.hexnet-detail-panel h6 { text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.6px; color: var(--text-muted); margin-bottom: 0.75rem; }
+.hexnet-detail-name { font-size: 1.15rem; font-weight: 700; margin-bottom: 0.4rem; }
+.hexnet-detail-row { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.35rem 0; border-bottom: 1px dashed var(--border); font-size: 0.85rem; }
+.hexnet-detail-row:last-child { border-bottom: none; }
+.hexnet-detail-empty { color: var(--text-muted); font-size: 0.85rem; text-align: center; padding: 1.5rem 0.5rem; }
+
+/* Search */
+.hexnet-search-wrap { position: relative; }
+.hexnet-search-results { position: absolute; z-index: 20; margin-top: 0.35rem; width: 100%; min-width: 260px; background: linear-gradient(135deg, rgba(30,36,54,0.98), rgba(12,16,26,0.98)); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 16px 34px -10px rgba(0,0,0,0.6); max-height: 280px; overflow-y: auto; }
+.hexnet-search-result { padding: 0.55rem 0.9rem; font-size: 0.85rem; cursor: pointer; display: flex; justify-content: space-between; gap: 0.5rem; }
+.hexnet-search-result:hover, .hexnet-search-result.active { background: rgba(99,102,241,0.18); }
+.hexnet-search-empty { padding: 0.75rem 0.9rem; font-size: 0.8rem; color: var(--text-muted); }
+
+/* Dashboard "My Network" mini widget */
+.hexnet-mini-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 1.25rem; }
+.hexnet-mini-svg-wrap { flex: 0 0 240px; max-width: 100%; }
+.hexnet-mini-stats { flex: 1 1 200px; display: flex; flex-direction: column; gap: 0.5rem; }
+
+@media (max-width: 768px) {
+    .hexnet-focus-wrap { flex-direction: column; }
+    .hexnet-detail-panel { flex-basis: auto; width: 100%; }
+    .hexnet-root-card { width: 210px; }
+    .hexnet-mini-svg-wrap { flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hexnet-dot-ring, .hexnet-live-dot { animation: none; }
+    .hexnet-node:hover .hexnet-hexagon { transform: none; }
+}
+
+/* Compose-email modal (read-only fields that are still meant to be selected/copied) */
+.compose-field[readonly] { cursor: text; opacity: 0.92; }
+

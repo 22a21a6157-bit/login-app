@@ -101,8 +101,12 @@ BEGIN
 END $$;
 
 -- Step 2: Generate public_user_id for existing users who don't have one
+-- (16 hex chars, matching both the CHAR(16) column and generate_public_id()
+-- in app.py - gen_random_uuid() alone produces 32 hex chars and overflows
+-- the column, which used to make this UPDATE fail outright on any DB that
+-- actually had legacy rows to backfill)
 UPDATE users 
-SET public_user_id = UPPER(REPLACE(gen_random_uuid()::TEXT, '-', ''))
+SET public_user_id = UPPER(SUBSTRING(REPLACE(gen_random_uuid()::TEXT, '-', '') FROM 1 FOR 16))
 WHERE public_user_id IS NULL;
 
 -- Step 3: Make public_user_id unique and not null
@@ -114,6 +118,25 @@ BEGIN
         WHERE conname = 'unique_public_user_id'
     ) THEN
         ALTER TABLE users ADD CONSTRAINT unique_public_user_id UNIQUE (public_user_id);
+    END IF;
+END $$;
+
+-- Step 3b: referral_id should reference public_user_id, same as a fresh
+-- install via schema.sql - a DB that only ever ran this migration script
+-- was missing this FK entirely. Added as NOT VALID so it can't fail the
+-- migration if a stray/orphaned referral_id already exists; it still
+-- enforces the constraint for everything written from this point on. Once
+-- you've confirmed your data is clean you can tighten it with:
+--   ALTER TABLE users VALIDATE CONSTRAINT fk_users_referral_id;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'fk_users_referral_id'
+    ) THEN
+        ALTER TABLE users
+            ADD CONSTRAINT fk_users_referral_id
+            FOREIGN KEY (referral_id) REFERENCES users(public_user_id) NOT VALID;
     END IF;
 END $$;
 
