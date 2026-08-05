@@ -229,7 +229,7 @@
       </div>
       <div class="modal-footer border-secondary">
         <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Close</button>
-        <a id="composeMailto" href="#" class="btn btn-glow"><i class="bi bi-envelope"></i> Open in Email App</a>
+        <a id="composeMailto" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-glow"><i class="bi bi-box-arrow-up-right"></i> Open in Gmail (new tab)</a>
       </div>
     </div>
   </div>
@@ -250,8 +250,13 @@ document.addEventListener('DOMContentLoaded', function () {
     var body = {{ compose_email.body|tojson }};
     var mailtoLink = document.getElementById('composeMailto');
     if (mailtoLink) {
-        mailtoLink.href = 'mailto:' + encodeURIComponent(to) +
-            '?subject=' + encodeURIComponent(subject) +
+        // Open Gmail's web compose view in a new browser tab instead of
+        // handing off to whatever mail app is registered on the device -
+        // mailto: links trigger that app-switch even with target="_blank",
+        // so we build the Gmail web-compose URL directly.
+        mailtoLink.href = 'https://mail.google.com/mail/?view=cm&fs=1' +
+            '&to=' + encodeURIComponent(to) +
+            '&su=' + encodeURIComponent(subject) +
             '&body=' + encodeURIComponent(body);
     }
 

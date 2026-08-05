@@ -1206,6 +1206,43 @@ def admin_network_api():
     finally:
         release_db(conn)
 
+@app.route("/api/my-network-levels")
+def my_network_levels_api():
+    """5 levels deep of the logged-in user's downline, level by level (BFS).
+    Each level returns up to 5 real referred people (each hexagon = one
+    actual person, never an aggregate) plus the true total at that depth,
+    so the UI can show a dull placeholder hexagon for every unfilled slot
+    and a highlighted one for every real referral."""
+    if "user_id" not in session:
+        return jsonify({"error": "not_authenticated"}), 401
+    conn = get_db()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT public_user_id FROM users WHERE id = %s", (session["user_id"],))
+            row = cur.fetchone()
+            if not row:
+                return jsonify({"error": "not_found"}), 404
+
+            current_ids = [row["public_user_id"]]
+            levels = []
+            for depth in range(1, 6):
+                if not current_ids:
+                    levels.append({"depth": depth, "total": 0, "people": []})
+                    continue
+                kids_map = _children_map(cur, current_ids)
+                flat = []
+                for pid in current_ids:
+                    flat.extend(kids_map.get(pid, []))
+                levels.append({"depth": depth, "total": len(flat), "people": flat[:5]})
+                current_ids = [n["id"] for n in flat]
+
+            return jsonify({"levels": levels})
+    except Exception as e:
+        logger.error(f"My-network levels API error: {e}")
+        return jsonify({"error": "server_error"}), 500
+    finally:
+        release_db(conn)
+
 @app.route("/api/my-network")
 def my_network_api():
     """Compact version of the network API scoped to the logged-in user's own

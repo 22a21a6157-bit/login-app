@@ -120,6 +120,8 @@
             <a href="#" class="text-muted small text-decoration-none" onclick="return false;" title="Live"><span class="hexnet-live-dot"></span>Live</a>
         </div>
         <div class="card-body">
+            <p class="text-muted small mb-3">Every hexagon is one real person. Levels 1–5 are how deep your referral chain goes; a highlighted, glowing hexagon means that slot has been referred (colored by their status), a dull dashed one means it hasn't been filled yet.</p>
+            <div class="d-flex flex-wrap gap-3 mb-3" id="myNetworkLegend"></div>
             <div class="hexnet-mini-wrap" id="myNetworkWidget">
                 <div class="text-center text-muted py-3 w-100"><div class="spinner-border spinner-border-sm text-primary me-2"></div>Loading your network…</div>
             </div>
@@ -191,36 +193,17 @@
 <script>
 (function () {
     const wrap = document.getElementById("myNetworkWidget");
+    const legendWrap = document.getElementById("myNetworkLegend");
     if (!wrap) return;
-    fetch("{{ url_for('my_network_api') }}")
+    if (legendWrap) legendWrap.innerHTML = HexNetwork.statusLegendHTML();
+
+    fetch("{{ url_for('my_network_levels_api') }}")
         .then((r) => r.json())
         .then((data) => {
-            if (data.error) { wrap.innerHTML = '<div class="hexnet-detail-empty">Could not load your network right now.</div>'; return; }
-            const svgWrap = document.createElement("div");
-            svgWrap.className = "hexnet-mini-svg-wrap";
-            svgWrap.innerHTML = data.satellites.length
-                ? HexNetwork.constellationSVG(data.center, data.satellites, { w: 260, h: 220, hexR: 38, spokeLen: 80, satR: 14 })
-                : HexNetwork.emptySVG(data.center, { w: 260, h: 190, hexR: 38 });
+            if (data.error || !data.levels) { wrap.innerHTML = '<div class="hexnet-detail-empty">Could not load your network right now.</div>'; return; }
 
-            const stats = document.createElement("div");
-            stats.className = "hexnet-mini-stats";
-            const counts = { approved: 0, pending: 0, rejected: 0 };
-            data.satellites.forEach((s) => { counts[s.status] = (counts[s.status] || 0) + 1; });
-            stats.innerHTML = `
-                <div>${HexNetwork.statusLegendHTML()}</div>
-                <div class="text-muted small">Hover or click anyone in your constellation for details. Circles show every direct referral, whatever their current status - not just approved ones.</div>
-                <div class="d-flex gap-3 flex-wrap small">
-                    <span><span class="hexnet-legend-dot" style="background:${HexNetwork.STATUS_COLOR.approved}"></span> ${counts.approved || 0} approved</span>
-                    <span><span class="hexnet-legend-dot" style="background:${HexNetwork.STATUS_COLOR.pending}"></span> ${counts.pending || 0} pending</span>
-                    <span><span class="hexnet-legend-dot" style="background:${HexNetwork.STATUS_COLOR.rejected}"></span> ${counts.rejected || 0} rejected</span>
-                </div>
-            `;
-
-            wrap.innerHTML = "";
-            wrap.appendChild(svgWrap);
-            wrap.appendChild(stats);
-
-            HexNetwork.attachInteractivity(svgWrap, HexNetwork.nodeMap(data.center, data.satellites), {});
+            wrap.innerHTML = HexNetwork.levelGridHTML(data.levels);
+            HexNetwork.attachInteractivity(wrap, HexNetwork.levelNodeMap(data.levels), {});
         })
         .catch(() => { wrap.innerHTML = '<div class="hexnet-detail-empty">Could not load your network right now.</div>'; });
 })();

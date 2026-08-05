@@ -178,6 +178,59 @@ const HexNetwork = (function () {
         return map;
     }
 
+    const SLOTS_PER_LEVEL = 5;
+    const LEVEL_COUNT = 5;
+
+    /**
+     * Build the 5-levels x 5-hexagons grid. `levels` is an array of
+     * { depth, total, people } from /api/my-network-levels, where `people`
+     * is the real, individual referred users at that depth (never an
+     * aggregate/graph node - one hexagon is always exactly one person).
+     * Unfilled slots render as dull placeholder hexagons; filled slots are
+     * highlighted and colored by that person's referral status.
+     */
+    function levelGridHTML(levels) {
+        let html = `<div class="hexnet-levels-grid">`;
+        for (let i = 0; i < LEVEL_COUNT; i++) {
+            const lvl = levels[i] || { depth: i + 1, total: 0, people: [] };
+            const people = lvl.people || [];
+            html += `<div class="hexnet-level-row">
+                <div class="hexnet-level-label">
+                    <span class="hexnet-level-num">Level ${lvl.depth}</span>
+                    <span class="hexnet-level-count">${lvl.total} referred</span>
+                </div>
+                <div class="hexnet-level-slots">`;
+            for (let s = 0; s < SLOTS_PER_LEVEL; s++) {
+                const person = people[s];
+                if (person) {
+                    const color = STATUS_COLOR[person.status] || STATUS_COLOR.approved;
+                    html += `<div class="hexnet-node hexnet-slot hexnet-slot-filled" data-id="${esc(person.id)}"
+                        style="--slot-color:${color}" tabindex="0" role="button"
+                        aria-label="${esc(person.name)}, ${STATUS_LABEL[person.status] || person.status}">
+                        <span class="hexnet-slot-initials">${esc(initials(person.name))}</span>
+                    </div>`;
+                } else {
+                    html += `<div class="hexnet-slot hexnet-slot-dull" aria-hidden="true">
+                        <span class="hexnet-slot-plus">+</span>
+                    </div>`;
+                }
+            }
+            if (lvl.total > SLOTS_PER_LEVEL) {
+                html += `<div class="hexnet-level-more">+${lvl.total - SLOTS_PER_LEVEL} more</div>`;
+            }
+            html += `</div></div>`;
+        }
+        html += `</div>`;
+        return html;
+    }
+
+    /** Flat id -> node map built from every person across all 5 levels, for tooltip/click lookups. */
+    function levelNodeMap(levels) {
+        const map = {};
+        (levels || []).forEach((lvl) => (lvl.people || []).forEach((p) => (map[p.id] = p)));
+        return map;
+    }
+
     function legendHTML() {
         const statuses = Object.keys(STATUS_COLOR).map((k) =>
             `<span class="hexnet-legend-item"><span class="hexnet-legend-dot" style="background:${STATUS_COLOR[k]}"></span>${STATUS_LABEL[k]}</span>`
@@ -199,5 +252,6 @@ const HexNetwork = (function () {
     return {
         STATUS_COLOR, STATUS_LABEL, LEVEL_COLOR,
         esc, initials, constellationSVG, emptySVG, attachInteractivity, nodeMap, legendHTML, statusLegendHTML,
+        levelGridHTML, levelNodeMap,
     };
 })();
