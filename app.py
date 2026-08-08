@@ -3,6 +3,7 @@ import os
 import secrets
 import re
 import logging
+import traceback
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -11,6 +12,7 @@ from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -22,7 +24,23 @@ logger = logging.getLogger(__name__)
 
 # ─── Configuration ─────────────────────────────────────────
 app = Flask(__name__)
+
+# Render (like Heroku/Railway) terminates HTTPS at its edge and forwards
+# requests to the app over plain HTTP, adding X-Forwarded-Proto/-Host
+# headers. Without ProxyFix, Flask doesn't know the original request was
+# HTTPS, so url_for(..., _external=True) - which builds the Google OAuth
+# redirect_uri - generates an http:// URL instead of https://. That
+# mismatches whatever https:// URI is registered in Google Cloud Console
+# and breaks the OAuth round trip. This trusts the single reverse proxy
+# in front of the app (Render's) to report the real scheme/host.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
+if not os.environ.get("SECRET_KEY"):
+    logger.warning("SECRET_KEY not set in environment - using an insecure default. "
+                    "Set a real SECRET_KEY in Render's environment variables; without "
+                    "it, sessions (including the Google OAuth login flow) can break "
+                    "across deploys/restarts.")
 # Only require HTTPS-only cookies in production. If this stays hardcoded True,
 # the session cookie is silently never set on plain HTTP (e.g. local dev),
 # which makes login look like it "succeeds" but immediately bounces back to
@@ -241,7 +259,7 @@ def google_login():
         redirect_uri = url_for("google_callback", _external=True)
         return google_oauth_client.authorize_redirect(redirect_uri)
     except Exception as e:
-        logger.error(f"Google login init error: {e}")
+        logger.error(f"Google login init error: {e}\n{traceback.format_exc()}")
         flash("Google login is temporarily unavailable. Please use email/password.", "warning")
         return redirect(url_for("login"))
 
@@ -305,7 +323,7 @@ def google_callback():
             release_db(conn)
 
     except Exception as e:
-        logger.error(f"Google callback error: {e}")
+        logger.error(f"Google callback error: {e}\n{traceback.format_exc()}")
         flash("Google login failed. Please use email/password or try again.", "danger")
         return redirect(url_for("login"))
 

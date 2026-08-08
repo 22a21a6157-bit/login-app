@@ -204,6 +204,7 @@
 
             wrap.innerHTML = HexNetwork.levelGridHTML(data.levels);
             HexNetwork.attachInteractivity(wrap, HexNetwork.levelNodeMap(data.levels), {});
+            HexNetwork.attachLevelGridAddSlots(wrap, {{ ref_link|tojson }}, copyToClipboard);
         })
         .catch(() => { wrap.innerHTML = '<div class="hexnet-detail-empty">Could not load your network right now.</div>'; });
 })();

@@ -427,6 +427,56 @@ body {
     .hexnet-slot { width: 40px; height: 40px; }
 }
 
+/* ── Level progression: active level draws focus, completed settles
+   back to normal, locked levels stay small/dim until reached ── */
+.hexnet-level-badge {
+    font-size: 0.62rem; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+    padding: 1px 6px; border-radius: 999px; width: fit-content; margin-top: 2px;
+}
+.hexnet-level-badge-done { color: #10b981; background: rgba(16, 185, 129, 0.12); }
+.hexnet-level-badge-active { color: #0b0f1a; background: #a5b4fc; animation: hexnetPulseBadge 1.8s ease-in-out infinite; }
+.hexnet-level-badge-locked { color: var(--text-muted); background: rgba(148, 163, 184, 0.1); }
+@keyframes hexnetPulseBadge { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+.hexnet-level-active .hexnet-slot { width: 58px; height: 58px; }
+.hexnet-level-active .hexnet-slot-filled { box-shadow: 0 0 20px -1px var(--slot-color); }
+.hexnet-level-active .hexnet-slot-initials { font-size: 0.9rem; }
+.hexnet-level-active .hexnet-slot-dull { border-color: rgba(165, 180, 252, 0.55); opacity: 0.8; animation: hexnetGlowInvite 2.2s ease-in-out infinite; }
+@keyframes hexnetGlowInvite { 0%, 100% { box-shadow: 0 0 0 rgba(165, 180, 252, 0); } 50% { box-shadow: 0 0 10px rgba(165, 180, 252, 0.35); } }
+
+.hexnet-level-completed .hexnet-slot { width: 46px; height: 46px; }
+
+.hexnet-level-locked .hexnet-slot { width: 34px; height: 34px; }
+.hexnet-level-locked .hexnet-slot-initials { font-size: 0.62rem; }
+.hexnet-level-locked .hexnet-slot-plus { font-size: 0.78rem; }
+.hexnet-level-locked { opacity: 0.6; }
+
+.hexnet-slot-add { cursor: pointer; }
+.hexnet-slot-add:hover, .hexnet-slot-add:focus-visible { opacity: 1; transform: scale(1.1); outline: none; border-color: rgba(165, 180, 252, 0.7); }
+
+/* ── Referral-link popup shown beside a clicked empty hexagon ── */
+.hexnet-ref-popup {
+    position: absolute; z-index: 1080; width: 280px;
+    background: #151a2b; border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 12px; padding: 0.85rem 0.9rem;
+    box-shadow: 0 12px 32px -6px rgba(0,0,0,0.55);
+    animation: hexnetPopupIn 0.15s ease-out;
+}
+@keyframes hexnetPopupIn { from { opacity: 0; transform: translateY(-4px) scale(0.97); } to { opacity: 1; transform: none; } }
+.hexnet-ref-popup-title { font-size: 0.78rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.3rem; }
+.hexnet-ref-popup-copied { font-size: 0.7rem; color: #10b981; margin-bottom: 0.5rem; }
+.hexnet-ref-popup-row { display: flex; gap: 0.4rem; }
+.hexnet-ref-popup-row input {
+    flex: 1; min-width: 0; background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.2);
+    color: var(--text-primary); font-size: 0.72rem; border-radius: 6px; padding: 0.35rem 0.5rem;
+}
+.hexnet-ref-popup-copy {
+    flex: 0 0 auto; border: 1px solid rgba(148, 163, 184, 0.2); background: rgba(165, 180, 252, 0.12);
+    color: #a5b4fc; border-radius: 6px; padding: 0.35rem 0.55rem; cursor: pointer;
+}
+.hexnet-ref-popup-copy:hover { background: rgba(165, 180, 252, 0.22); }
+.hexnet-ref-popup-hint { font-size: 0.66rem; color: var(--text-muted); margin-top: 0.45rem; line-height: 1.35; }
+
 @media (max-width: 768px) {
     .hexnet-focus-wrap { flex-direction: column; }
     .hexnet-detail-panel { flex-basis: auto; width: 100%; }

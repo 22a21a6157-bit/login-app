@@ -188,16 +188,33 @@ const HexNetwork = (function () {
      * aggregate/graph node - one hexagon is always exactly one person).
      * Unfilled slots render as dull placeholder hexagons; filled slots are
      * highlighted and colored by that person's referral status.
+     *
+     * Progression: the first level that isn't completely filled (5/5) is
+     * the "active" level and renders larger/brighter to draw the eye to
+     * where to focus next. Levels before it that are already full render
+     * as "completed" (normal size, checkmarked). Levels after it are
+     * "locked" (smaller/dimmer) until the level ahead of them fills up.
      */
     function levelGridHTML(levels) {
+        let activeIdx = LEVEL_COUNT; // default: every level full -> none "active"
+        for (let i = 0; i < LEVEL_COUNT; i++) {
+            if (((levels[i] || {}).total || 0) < SLOTS_PER_LEVEL) { activeIdx = i; break; }
+        }
+
         let html = `<div class="hexnet-levels-grid">`;
         for (let i = 0; i < LEVEL_COUNT; i++) {
             const lvl = levels[i] || { depth: i + 1, total: 0, people: [] };
             const people = lvl.people || [];
-            html += `<div class="hexnet-level-row">
+            const state = i < activeIdx ? "completed" : i === activeIdx ? "active" : "locked";
+            const stateBadge = state === "completed" ? '<span class="hexnet-level-badge hexnet-level-badge-done"><i class="bi bi-check-circle-fill"></i> Full</span>'
+                : state === "active" ? '<span class="hexnet-level-badge hexnet-level-badge-active">Active</span>'
+                : '<span class="hexnet-level-badge hexnet-level-badge-locked"><i class="bi bi-lock-fill"></i> Next up</span>';
+
+            html += `<div class="hexnet-level-row hexnet-level-${state}" data-depth="${lvl.depth}">
                 <div class="hexnet-level-label">
                     <span class="hexnet-level-num">Level ${lvl.depth}</span>
                     <span class="hexnet-level-count">${lvl.total} referred</span>
+                    ${stateBadge}
                 </div>
                 <div class="hexnet-level-slots">`;
             for (let s = 0; s < SLOTS_PER_LEVEL; s++) {
@@ -210,7 +227,8 @@ const HexNetwork = (function () {
                         <span class="hexnet-slot-initials">${esc(initials(person.name))}</span>
                     </div>`;
                 } else {
-                    html += `<div class="hexnet-slot hexnet-slot-dull" aria-hidden="true">
+                    html += `<div class="hexnet-slot hexnet-slot-dull hexnet-slot-add" tabindex="0" role="button"
+                        aria-label="Empty slot - click to copy your referral link">
                         <span class="hexnet-slot-plus">+</span>
                     </div>`;
                 }
@@ -222,6 +240,64 @@ const HexNetwork = (function () {
         }
         html += `</div>`;
         return html;
+    }
+
+    let _refPopup = null;
+    function closeRefPopup() {
+        if (_refPopup) { _refPopup.remove(); _refPopup = null; }
+        document.removeEventListener("click", onDocClickCloseRefPopup, true);
+    }
+    function onDocClickCloseRefPopup(evt) {
+        if (_refPopup && !_refPopup.contains(evt.target)) closeRefPopup();
+    }
+
+    /**
+     * Wire every empty "+" hexagon in a levels grid so clicking it opens a
+     * small popup beside that hexagon with the user's referral link,
+     * copies it to the clipboard immediately, and offers a manual copy
+     * button too. `copyFn` should be the app's existing copyToClipboard(text).
+     */
+    function attachLevelGridAddSlots(root, refLink, copyFn) {
+        root.querySelectorAll(".hexnet-slot-add").forEach((el) => {
+            const open = (evt) => {
+                evt.stopPropagation();
+                closeRefPopup();
+
+                const rect = el.getBoundingClientRect();
+                const popup = document.createElement("div");
+                popup.className = "hexnet-ref-popup";
+                popup.innerHTML = `
+                    <div class="hexnet-ref-popup-title"><i class="bi bi-link-45deg"></i> Your referral link</div>
+                    <div class="hexnet-ref-popup-copied"><i class="bi bi-check-circle-fill"></i> Copied to clipboard</div>
+                    <div class="hexnet-ref-popup-row">
+                        <input type="text" readonly value="${esc(refLink)}">
+                        <button type="button" class="hexnet-ref-popup-copy"><i class="bi bi-clipboard"></i></button>
+                    </div>
+                    <div class="hexnet-ref-popup-hint">Share it - new sign-ups fill the next open slot automatically.</div>
+                `;
+                document.body.appendChild(popup);
+
+                // Position aside the hexagon: prefer to the right, flip to
+                // the left if it would run off the viewport edge.
+                const pw = popup.offsetWidth, ph = popup.offsetHeight;
+                let left = rect.right + 10;
+                if (left + pw > window.innerWidth - 8) left = rect.left - pw - 10;
+                if (left < 8) left = Math.max(8, Math.min(window.innerWidth - pw - 8, rect.left));
+                let top = rect.top + rect.height / 2 - ph / 2;
+                top = Math.max(8, Math.min(window.innerHeight - ph - 8, top));
+                popup.style.left = `${left + window.scrollX}px`;
+                popup.style.top = `${top + window.scrollY}px`;
+
+                popup.querySelector(".hexnet-ref-popup-copy").addEventListener("click", () => copyFn(refLink));
+                _refPopup = popup;
+                if (typeof copyFn === "function") copyFn(refLink);
+                requestAnimationFrame(() => document.addEventListener("click", onDocClickCloseRefPopup, true));
+            };
+            el.addEventListener("click", open);
+            el.addEventListener("keydown", (evt) => {
+                if (evt.key === "Enter" || evt.key === " ") { evt.preventDefault(); open(evt); }
+            });
+        });
     }
 
     /** Flat id -> node map built from every person across all 5 levels, for tooltip/click lookups. */
@@ -252,6 +328,6 @@ const HexNetwork = (function () {
     return {
         STATUS_COLOR, STATUS_LABEL, LEVEL_COLOR,
         esc, initials, constellationSVG, emptySVG, attachInteractivity, nodeMap, legendHTML, statusLegendHTML,
-        levelGridHTML, levelNodeMap,
+        levelGridHTML, levelNodeMap, attachLevelGridAddSlots,
     };
 })();
