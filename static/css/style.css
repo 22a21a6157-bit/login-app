@@ -2,8 +2,14 @@
 :root {
     --bg-primary: #0f172a;
     --bg-secondary: #1e293b;
-    --accent: #6366f1;
-    --accent-glow: rgba(99, 102, 241, 0.35);
+    /* Saffron -> India Green, standing in for the old indigo/violet pair.
+       Kept at the same lightness/saturation "weight" as the original
+       (#6366f1 / #8b5cf6) so every existing glow, shadow and opacity value
+       elsewhere in this file still reads correctly - only the hue moved. */
+    --accent: #ff9933;
+    --accent-secondary: #0f9d58;
+    --accent-glow: rgba(255, 153, 51, 0.35);
+    --tricolor: linear-gradient(90deg, #ff9933 0%, #ff9933 33%, #f8fafc 33%, #f8fafc 66%, #128807 66%, #128807 100%);
     --text-primary: #f8fafc;
     --text-muted: #cbd5e1;
     --border: rgba(255, 255, 255, 0.14);
@@ -60,6 +66,7 @@ body {
 }
 
 .auth-glass {
+    position: relative;
     background: linear-gradient(135deg, var(--glass-fill-strong), var(--glass-fill));
     backdrop-filter: blur(var(--glass-blur)) saturate(160%);
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
@@ -68,9 +75,21 @@ body {
     padding: 2.5rem;
     width: 100%;
     max-width: 420px;
+    overflow: hidden;
     box-shadow:
         0 25px 60px -12px rgba(0, 0, 0, 0.55),
         inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* Slim tricolor accent along the top edge of every auth card - a quiet
+   Indian touch that doesn't fight the glassmorphism look. */
+.auth-glass::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: var(--tricolor);
+    opacity: 0.85;
 }
 
 .auth-logo {
@@ -127,25 +146,45 @@ body {
 
 /* ─── Buttons ────────────────────────────────────────────── */
 .btn-glow {
-    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
     border: none;
     padding: 0.75rem;
     border-radius: 14px;
     font-weight: 600;
     letter-spacing: 0.3px;
-    box-shadow: 0 8px 20px rgba(99, 102, 241, 0.35), inset 0 1px 0 rgba(255,255,255,0.25);
-    transition: all 0.3s;
+    box-shadow: 0 8px 20px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.25);
+    transition: transform 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease;
 }
 
 .btn-glow:hover {
     transform: translateY(-2px);
-    box-shadow: 0 12px 28px rgba(99, 102, 241, 0.45), inset 0 1px 0 rgba(255,255,255,0.3);
+    filter: brightness(1.06);
+    box-shadow: 0 14px 30px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.3);
+}
+
+.btn-glow:active {
+    transform: translateY(0);
+    filter: brightness(0.98);
 }
 
 .btn-outline-light, .btn-outline-secondary {
     backdrop-filter: blur(8px);
     border-radius: 14px;
+    transition: transform 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
 }
+
+.btn-outline-light:hover, .btn-outline-secondary:hover {
+    transform: translateY(-1px);
+    border-color: var(--accent);
+}
+
+/* Generic lift-on-hover for every ordinary button, so nothing in the app
+   feels static when it's clickable. */
+.btn {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+.btn:hover { filter: brightness(1.04); }
+.btn:active { transform: translateY(0) scale(0.99); }
 
 /* ─── Waiting Page ───────────────────────────────────────── */
 .status-icon {
@@ -212,6 +251,18 @@ body {
     color: var(--text-muted);
 }
 
+.table-hover > tbody > tr {
+    transition: background-color 0.15s ease, transform 0.15s ease;
+}
+.table-hover > tbody > tr:hover {
+    --bs-table-accent-bg: rgba(255, 153, 51, 0.08);
+    transform: translateX(2px);
+}
+
+.badge {
+    transition: transform 0.15s ease, filter 0.15s ease;
+}
+
 /* ─── Toast ──────────────────────────────────────────────── */
 .toast {
     background: linear-gradient(135deg, var(--glass-fill-strong), var(--glass-fill));
@@ -227,7 +278,33 @@ body {
     backdrop-filter: blur(var(--glass-blur)) saturate(160%);
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
     border-bottom: 1px solid var(--border);
+    position: relative;
 }
+
+.navbar::after, .admin-nav::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: -1px;
+    height: 3px;
+    background: var(--tricolor);
+    opacity: 0.7;
+}
+
+.navbar-brand { transition: opacity 0.2s ease, letter-spacing 0.2s ease; }
+.navbar-brand:hover { opacity: 0.85; }
+
+.nav-link, .dropdown-item {
+    transition: color 0.2s ease, background-color 0.2s ease, padding-left 0.2s ease;
+}
+.dropdown-item:hover, .dropdown-item:focus {
+    background: var(--glass-fill-strong);
+    color: var(--text-primary);
+    padding-left: 1.15rem;
+}
+
+/* Any plain text link in a card/body gets a gentle underline sweep on
+   hover instead of Bootstrap's flat color swap. */
+a.text-decoration-none:hover { text-decoration: underline; text-decoration-color: var(--accent); }
 
 /* ─── Modal (glass) ──────────────────────────────────────── */
 .modal-content {
@@ -258,7 +335,7 @@ body {
 }
 
 /* ─── Admin nav bar (shared by admin dashboard + network explorer) ── */
-.admin-nav { background: rgba(15,23,42,0.98); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(255,255,255,0.05); }
+.admin-nav { position: relative; background: rgba(15,23,42,0.98); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(255,255,255,0.05); }
 
 /* ═══════════════════════════════════════════════════════════
    Hex Network — referral constellation visualization

@@ -4,6 +4,8 @@
 <style>
 .network-hero { max-width: 640px; }
 .btn-icon-sm { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border-radius: 10px; }
+#refreshBtn i { display: inline-block; transition: transform 0.4s ease; }
+#refreshBtn:hover i { transform: rotate(180deg); }
 </style>
 {% endblock %}
 {% block content %}
@@ -158,7 +160,7 @@
             <div class="hexnet-detail-row"><span>Status</span><span><span class="hexnet-legend-dot" style="background:${statusColor}"></span> ${HexNetwork.STATUS_LABEL[node.status] || node.status}</span></div>
             <div class="hexnet-detail-row"><span>Level</span><span>${HexNetwork.esc(node.level)}</span></div>
             <div class="hexnet-detail-row"><span>Referrals</span><span>${node.referrals}</span></div>
-            <div class="hexnet-detail-row"><span>Earned</span><span>$${Number(node.earned).toFixed(2)}</span></div>
+            <div class="hexnet-detail-row"><span>Earned</span><span>\u20b9${Number(node.earned).toFixed(2)}</span></div>
             <div class="hexnet-detail-row"><span>Referral ID</span><span class="font-monospace small">${HexNetwork.esc(node.id)}</span></div>
             ${node.joined ? `<div class="hexnet-detail-row"><span>Joined</span><span>${HexNetwork.esc(node.joined)}</span></div>` : ""}
             ${showDrill && node.hasChildren ? `<button class="btn btn-glow btn-sm w-100 mt-3" id="drillBtn"><i class="bi bi-hexagon"></i> View Their Network</button>` : ""}

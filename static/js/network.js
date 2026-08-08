@@ -125,7 +125,7 @@ const HexNetwork = (function () {
         return `
             <div class="hexnet-tooltip-name">${esc(node.name)}</div>
             <div class="hexnet-tooltip-row"><span class="hexnet-tooltip-dot" style="background:${statusColor}"></span>${esc(statusLabel)} &middot; ${esc(node.level)}</div>
-            <div class="hexnet-tooltip-row">${node.referrals} referral${node.referrals === 1 ? "" : "s"} &middot; $${Number(node.earned).toFixed(2)} earned</div>
+            <div class="hexnet-tooltip-row">${node.referrals} referral${node.referrals === 1 ? "" : "s"} &middot; \u20b9${Number(node.earned).toFixed(2)} earned</div>
             ${node.joined ? `<div class="hexnet-tooltip-row hexnet-tooltip-muted">Joined ${esc(node.joined)}</div>` : ""}
             ${node.hasChildren ? `<div class="hexnet-tooltip-row hexnet-tooltip-hint">Click to explore their network →</div>` : ""}
         `;

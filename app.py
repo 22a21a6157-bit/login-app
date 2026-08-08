@@ -17,6 +17,9 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
+from flask_wtf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # ─── Logging ───────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +53,54 @@ app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "t
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = 3600  # 1 hour
+
+# ─── CSRF protection ────────────────────────────────────────
+# Every state-changing form in this app (login, register, password reset,
+# admin approve/reject actions) is a plain POST with a session cookie and
+# no anti-CSRF token. That means a malicious page anywhere on the web could
+# have silently submitted a hidden form to, say, /admin/approve-user/7 while
+# an admin was logged in and just browsing - the browser attaches the
+# session cookie automatically. Flask-WTF's CSRFProtect requires a signed,
+# per-session token on every POST/PUT/PATCH/DELETE (Jinja's `csrf_token()`,
+# added to every form in the templates), rejecting anything without one.
+csrf = CSRFProtect(app)
+
+# ─── Rate limiting ──────────────────────────────────────────
+# With only a handful of accounts, a brute-force or credential-stuffing
+# script could try thousands of passwords against /login (or hammer
+# /register, /forgot-password) with no pushback. Flask-Limiter caps requests
+# per IP; storage is in-memory, which is fine for a single small
+# gunicorn deployment like this one (set LIMITER_STORAGE_URI to a Redis URL
+# if you ever scale to multiple dynos/instances, so the counters are shared).
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    storage_uri=os.environ.get("LIMITER_STORAGE_URI", "memory://"),
+    default_limits=[],
+)
+
+# ─── Security headers on every response ────────────────────
+@app.after_request
+def set_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # Only advertise HSTS when we're actually enforcing HTTPS cookies -
+    # sending it while testing over plain HTTP would lock browsers into
+    # HTTPS-only for this host, breaking local/dev access.
+    if app.config["SESSION_COOKIE_SECURE"]:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+        "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'"
+    )
+    return response
 
 # ─── Signed, expiring tokens for password reset links ────────
 # (Previously the token was just base64("<user_id>:<public_id>") with no
@@ -207,7 +258,22 @@ def get_level(ref_count):
     return "Starter"
 
 def format_currency(amount):
-    return f"${amount:,.2f}"
+    return f"\u20b9{amount:,.2f}"
+
+PASSWORD_MIN_LENGTH = 8
+
+def password_errors(password):
+    """Replaces the old 'at least 6 characters' rule, which let through
+    things like 'aaaaaa'. Still short and usable, but now requires a mix
+    that resists common brute-force wordlists."""
+    errs = []
+    if len(password) < PASSWORD_MIN_LENGTH:
+        errs.append(f"Password must be at least {PASSWORD_MIN_LENGTH} characters.")
+    if not re.search(r"[A-Za-z]", password):
+        errs.append("Password must include at least one letter.")
+    if not re.search(r"\d", password):
+        errs.append("Password must include at least one number.")
+    return errs
 
 def admin_required(f):
     @wraps(f)
@@ -331,6 +397,7 @@ def google_callback():
 # REGISTRATION
 # ═════════════════════════════════════════════════════════════
 @app.route("/register", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
 def register():
     if "user_id" in session:
         return redirect(url_for("dashboard"))
@@ -352,8 +419,7 @@ def register():
             errors.append("Valid email is required.")
         if not username or len(username) < 3:
             errors.append("Username must be at least 3 characters.")
-        if not password or len(password) < 6:
-            errors.append("Password must be at least 6 characters.")
+        errors.extend(password_errors(password))
         if password != confirm_password:
             errors.append("Passwords do not match.")
 
@@ -471,8 +537,7 @@ def complete_google_profile():
             errors.append("Full name is required.")
         if not username or len(username) < 3:
             errors.append("Username must be at least 3 characters.")
-        if not password or len(password) < 6:
-            errors.append("Password must be at least 6 characters.")
+        errors.extend(password_errors(password))
         if password != confirm_password:
             errors.append("Passwords do not match.")
 
@@ -553,6 +618,7 @@ def complete_google_profile():
 # LOGIN / LOGOUT - With better error handling
 # ═════════════════════════════════════════════════════════════
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("8 per minute")
 def login():
     if "user_id" in session:
         return redirect(url_for("dashboard"))
@@ -591,6 +657,7 @@ def login():
                     return render_template("login.html")
 
                 if not check_password_hash(user["password_hash"], password):
+                    logger.warning(f"Failed login attempt for '{username}' from {get_remote_address()}")
                     flash("Invalid username or password.", "danger")
                     return render_template("login.html")
 
@@ -690,6 +757,7 @@ def dashboard():
 # FORGOT PASSWORD / RESET PASSWORD
 # ═════════════════════════════════════════════════════════════
 @app.route("/forgot-password", methods=["GET", "POST"])
+@limiter.limit("5 per minute")
 def forgot_password():
     if "user_id" in session:
         return redirect(url_for("dashboard"))
@@ -754,6 +822,7 @@ def forgot_password():
     return render_template("forgot_password.html")
 
 @app.route("/reset-password/<token>", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
 def reset_password(token):
     if "user_id" in session:
         return redirect(url_for("dashboard"))
@@ -791,8 +860,10 @@ def reset_password(token):
                 password = request.form.get("password", "")
                 confirm = request.form.get("confirm_password", "")
 
-                if len(password) < 6:
-                    flash("Password must be at least 6 characters.", "danger")
+                pw_errors = password_errors(password)
+                if pw_errors:
+                    for e in pw_errors:
+                        flash(e, "danger")
                     return render_template("reset_password.html", token=token, user=user)
                 if password != confirm:
                     flash("Passwords do not match.", "danger")
@@ -977,7 +1048,7 @@ def approve_user(user_id):
             flash(f"User {updated['public_user_id']} approved!", "success")
 
             if updated and updated.get("referral_id"):
-                flash(f"Referral reward of $100.00 processed.", "info")
+                flash(f"Referral reward of {format_currency(100.00)} processed.", "info")
 
     except Exception as e:
         conn.rollback()
